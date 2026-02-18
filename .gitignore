@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+
+# Environment variables (may contain API keys)
+.env
+.env.local
+.env.*.local
+
+# Screenshots and output (user-generated data)
+screenshots/
+screenshots_*/
+output/
+ocr_output.txt
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+/tmp/
+*.tmp
+
+# AI assistant config (personal)
+.claude/
+.gemini/
+
+# Dev/debug scripts
+scroll_test.py
+navigate_chat.sh
+
+# Agent workflows (personal)
+.agent/
