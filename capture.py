@@ -469,6 +469,14 @@ def capture_chat(
     # Navigate to target chat if specified
     if group_name:
         navigate_to_chat(group_name, window, layout)
+        # Re-detect layout after navigation — when no chat was previously
+        # selected, the initial detect_layout may have used incorrect
+        # fallback values (the right side is blank, so sidebar divider
+        # detection fails). After clicking into a chat, the layout becomes
+        # detectable.
+        time.sleep(0.5)
+        window = get_wechat_window_info()
+        layout = detect_layout(window)
 
     chat_area = get_chat_area(window, layout)
     print(f"Window: {window}")
