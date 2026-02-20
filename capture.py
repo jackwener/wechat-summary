@@ -262,6 +262,17 @@ def click_chat_area(chat_area: dict):
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, click_up)
 
 
+def _ocr_normalize(text: str) -> str:
+    """Normalize text to handle common OCR confusions (I/l/1, O/0, etc.)."""
+    # Apply lowercase first, then normalize confusable characters
+    t = text.lower()
+    # l (lowercase L) and 1 → i (canonical form for I/l/1 confusion)
+    t = t.replace("l", "i").replace("1", "i")
+    # 0 → o (for O/0 confusion)
+    t = t.replace("0", "o")
+    return t
+
+
 def _ocr_all_text(image_path: str) -> list[str]:
     """OCR an image and return all recognized text strings."""
     import Vision
@@ -304,11 +315,16 @@ def _verify_search_results(group_name: str, sidebar_region: dict) -> bool:
     all_text = " ".join(texts).lower()
     # Also create a version with all whitespace stripped for fuzzy matching
     all_text_compact = all_text.replace(" ", "")
+    # OCR-normalized versions (handles I/l/1 and O/0 confusion)
+    all_text_norm = _ocr_normalize(" ".join(texts))
+    all_text_compact_norm = all_text_norm.replace(" ", "")
 
     print(f"  Search OCR texts: {texts[:10]}")  # debug: show first 10 OCR blocks
 
     target_lower = group_name.lower()
     target_compact = target_lower.replace(" ", "")
+    target_norm = _ocr_normalize(group_name)
+    target_compact_norm = target_norm.replace(" ", "")
 
     # Match 1: exact substring (with spaces)
     if target_lower in all_text:
@@ -318,10 +334,14 @@ def _verify_search_results(group_name: str, sidebar_region: dict) -> bool:
     if target_compact in all_text_compact:
         return True
 
-    # Match 3: key parts match (at least half of the parts found)
+    # Match 3: OCR-normalized match (handles I/l, O/0 confusion)
+    if target_norm in all_text_norm or target_compact_norm in all_text_compact_norm:
+        return True
+
+    # Match 4: key parts match (at least half of the parts found)
     target_parts = [p for p in target_lower.split() if len(p) >= 1]
     if target_parts:
-        matched = sum(1 for part in target_parts if part in all_text)
+        matched = sum(1 for part in target_parts if part in all_text or _ocr_normalize(part) in all_text_norm)
         if matched >= max(1, len(target_parts) * 0.5):
             return True
 
@@ -461,14 +481,34 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
                     "Please ensure the group chat name is correct and you are a member."
                 )
 
-        # Press Return to select the first search result
-        run_applescript('''
-        tell application "System Events"
-            tell process "WeChat"
-                key code 36
+        # Click on the search result instead of pressing Return —
+        # Return doesn't reliably select group chat results in WeChat search.
+        search_region = {
+            "x": sidebar_region["x"],
+            "y": sidebar_region["y"],
+            "width": sidebar_region["width"] + 100,
+            "height": sidebar_region["height"],
+        }
+        search_screenshot = "/tmp/_search_verify.png"
+        take_screenshot(search_region, search_screenshot)
+        result_y = _ocr_find_text_y(search_screenshot, search_region, group_name)
+
+        if result_y is not None:
+            result_x = search_region["x"] + search_region["width"] // 2
+            print(f"  Clicking search result at ({result_x}, {result_y})")
+            run_applescript('tell application "WeChat" to activate')
+            time.sleep(0.2)
+            subprocess.run(["cliclick", f"c:{result_x},{result_y}"], check=True, timeout=5)
+        else:
+            # Fallback: press Return (may not always work)
+            print(f"  ⚠️  Could not locate search result position, pressing Return as fallback")
+            run_applescript('''
+            tell application "System Events"
+                tell process "WeChat"
+                    key code 36
+                end tell
             end tell
-        end tell
-        ''')
+            ''')
         time.sleep(1.0)
 
     # --- Strategy 1: check if the group is already visible in sidebar ---
@@ -532,6 +572,8 @@ def _ocr_find_text_y(image_path: str, region: Dict, target: str) -> Optional[int
 
     target_lower = target.lower()
     target_clean = target_lower.rstrip('.…。').strip()
+    target_norm = _ocr_normalize(target)
+    target_clean_norm = target_norm.rstrip('.…。').strip()
 
     # screencapture -R uses point coordinates but produces pixel-resolution images
     # On Retina displays, img_h (pixels) = region["height"] (points) * scale_factor
@@ -554,30 +596,34 @@ def _ocr_find_text_y(image_path: str, region: Dict, target: str) -> Optional[int
         text = top_candidates[0].string()
         text_lower = text.lower()
         text_clean = text_lower.rstrip('.…。').strip()
+        text_norm = _ocr_normalize(text)
+        text_clean_norm = text_norm.rstrip('.…。').strip()
 
-        # Priority 0: exact match (after stripping dots)
-        if text_clean == target_clean:
+        # Priority 0: exact match (after stripping dots), including OCR-normalized
+        if text_clean == target_clean or text_clean_norm == target_clean_norm:
             candidates.append((0, _get_screen_y(obs), text))
             continue
 
         # Priority 1: full substring match (target in text or text in target)
-        if target_lower in text_lower or text_lower in target_lower:
+        if (target_lower in text_lower or text_lower in target_lower or
+                target_norm in text_norm or text_norm in target_norm):
             candidates.append((1, _get_screen_y(obs), text))
             continue
 
         # Priority 2: prefix match (for truncated names)
         if len(text_clean) >= 5 and (
-            target_clean.startswith(text_clean) or text_clean.startswith(target_clean)
+            target_clean.startswith(text_clean) or text_clean.startswith(target_clean) or
+            target_clean_norm.startswith(text_clean_norm) or text_clean_norm.startswith(target_clean_norm)
         ):
             candidates.append((2, _get_screen_y(obs), text))
             continue
 
         # Priority 3: word-level partial match
         target_parts = [p for p in target.split() if len(p) > 2]
-        if target_parts and target_parts[0].lower() in text_lower:
+        if target_parts and (target_parts[0].lower() in text_lower or _ocr_normalize(target_parts[0]) in text_norm):
             if len(target_parts) >= 2:
                 second = target_parts[1].lower()
-                if second[:4] in text_lower:
+                if second[:4] in text_lower or _ocr_normalize(second[:4]) in text_norm:
                     candidates.append((3, _get_screen_y(obs), text))
 
     if not candidates:
