@@ -260,23 +260,110 @@ def click_chat_area(chat_area: dict):
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, click_up)
 
 
+def _ocr_all_text(image_path: str) -> list[str]:
+    """OCR an image and return all recognized text strings."""
+    import Vision
+    from Foundation import NSURL
+
+    image_url = NSURL.fileURLWithPath_(image_path)
+    request = Vision.VNRecognizeTextRequest.alloc().init()
+    request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
+    request.setRecognitionLanguages_(["zh-Hans", "en"])
+
+    handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(image_url, {})
+    handler.performRequests_error_([request], None)
+
+    texts = []
+    for obs in (request.results() or []):
+        top = obs.topCandidates_(1)
+        if top:
+            texts.append(top[0].string())
+    return texts
+
+
+def _verify_search_results(group_name: str, sidebar_region: dict) -> bool:
+    """
+    Screenshot the sidebar area after search and OCR to verify
+    the search results contain the target group name.
+    """
+    path = "/tmp/_search_verify.png"
+    take_screenshot(sidebar_region, path)
+    texts = _ocr_all_text(path)
+    all_text = " ".join(texts).lower()
+
+    target_lower = group_name.lower()
+    target_parts = [p for p in target_lower.split() if len(p) > 1]
+
+    # Check: exact match, substring, or key parts present
+    if target_lower in all_text:
+        return True
+    for part in target_parts:
+        if part in all_text:
+            return True
+    return False
+
+
+def _verify_chat_title(group_name: str, window: dict, layout: dict | None) -> bool:
+    """
+    Screenshot the chat title bar area and OCR to verify
+    we entered the correct group chat.
+    Re-acquires window info to handle layout changes after search.
+    """
+    # Re-acquire window info — layout may have changed after search/navigation
+    try:
+        window = get_wechat_window_info()
+    except Exception:  # noqa: BLE001
+        pass  # Fall back to the passed-in window
+
+    wx, wy = window["x"], window["y"]
+    ww = window["width"]
+
+    # Chat title is in the top ~50pt of the area right of the sidebar.
+    # Use a conservative sidebar estimate since we may not have accurate layout.
+    sidebar_right = layout["sidebar_right"] if layout else int(ww * 0.25)
+
+    title_region = {
+        "x": wx + sidebar_right,
+        "y": wy,
+        "width": ww - sidebar_right,
+        "height": 50,
+    }
+
+    path = "/tmp/_title_verify.png"
+    take_screenshot(title_region, path)
+    texts = _ocr_all_text(path)
+    all_text = " ".join(texts).lower()
+    print(f"  Title bar OCR: {texts}")
+
+    target_lower = group_name.lower()
+    target_parts = [p for p in target_lower.split() if len(p) > 1]
+
+    if target_lower in all_text:
+        return True
+    # Partial match: check key parts (handles truncated titles)
+    matched = sum(1 for part in target_parts if part in all_text)
+    if target_parts and matched >= len(target_parts) * 0.5:
+        return True
+    return False
+
+
 def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) -> None:
     """
-    Navigate to a specific group chat by OCR-scanning the sidebar.
+    Navigate to a specific group chat with screenshot-based verification.
 
     Strategy:
     1. Screenshot sidebar and OCR to find the target group
-    2. If not visible, search for the group name first, then Escape + re-scan
-    3. Click the detected position
+    2. If not visible, Cmd+F to search, paste group name
+    3. Verify search results contain the target group (screenshot + OCR)
+    4. Press Return to enter the chat
+    5. Verify title bar shows correct group name (screenshot + OCR)
 
-    Requires: cliclick (brew install cliclick)
+    Raises RuntimeError if navigation cannot be verified.
     """
     wx, wy = window["x"], window["y"]
 
-    # Use detected layout or fall back to hardcoded estimates
     if layout:
         sidebar_region = layout["sidebar"]
-        search_x, search_y = layout["search_box_center"]
         click_x = layout["sidebar_center_x"]
     else:
         sidebar_region = {
@@ -285,8 +372,6 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
             "width": 220,
             "height": min(window.get("height", 890) - 60, 800),
         }
-        search_x = wx + 121
-        search_y = wy + 24
         click_x = wx + 180
 
     def _find_group_in_sidebar() -> int | None:
@@ -295,13 +380,11 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
         take_screenshot(sidebar_region, path)
         return _ocr_find_text_y(path, sidebar_region, group_name)
 
-    # First try: check if the group is already visible in sidebar
-    target_y = _find_group_in_sidebar()
+    def _search_and_enter() -> None:
+        """Use Cmd+F search to find and enter the target group chat."""
+        print(f"  Searching for '{group_name}' via Cmd+F...")
 
-    if target_y is None:
-        # Group not visible — search for it to bring it into sidebar
-        print(f"  Group '{group_name}' not visible in sidebar, searching...")
-        # Use Cmd+F to activate search — more reliable than clicking search bar position
+        # Cmd+F to activate search
         run_applescript('''
         tell application "System Events"
             tell process "WeChat"
@@ -311,6 +394,7 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
         ''')
         time.sleep(0.5)
 
+        # Paste group name
         subprocess.run(["pbcopy"], input=group_name.encode("utf-8"), check=True, timeout=5)
         run_applescript('''
         tell application "System Events"
@@ -321,7 +405,38 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
         ''')
         time.sleep(1.5)
 
-        # Press Return to select the first search result — WeChat opens that chat directly
+        # --- Verification Step 1: search results contain target group ---
+        if _verify_search_results(group_name, sidebar_region):
+            print(f"  ✅ Search verification passed: found '{group_name}' in search results")
+        else:
+            print(f"  ⚠️  Search verification: '{group_name}' not found in results, retrying...")
+            # Retry: clear and re-paste
+            run_applescript('''
+            tell application "System Events"
+                tell process "WeChat"
+                    keystroke "a" using command down
+                    key code 51
+                end tell
+            end tell
+            ''')
+            time.sleep(0.3)
+            run_applescript('''
+            tell application "System Events"
+                tell process "WeChat"
+                    keystroke "v" using command down
+                end tell
+            end tell
+            ''')
+            time.sleep(2.0)
+            if _verify_search_results(group_name, sidebar_region):
+                print(f"  ✅ Search verification passed on retry")
+            else:
+                raise RuntimeError(
+                    f"Navigation failed: could not find '{group_name}' in search results. "
+                    "Please ensure the group chat name is correct and you are a member."
+                )
+
+        # Press Return to select the first search result
         run_applescript('''
         tell application "System Events"
             tell process "WeChat"
@@ -330,23 +445,41 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
         end tell
         ''')
         time.sleep(1.0)
-        print(f"Navigated to: {group_name}")
-        return
+
+    # --- Strategy 1: check if the group is already visible in sidebar ---
+    target_y = _find_group_in_sidebar()
 
     if target_y is not None:
-        click_y = target_y
-        print(f"  Found '{group_name}' at y={click_y}, clicking ({click_x}, {click_y})")
-        # Ensure WeChat is frontmost before clicking
+        print(f"  Found '{group_name}' at y={target_y}, clicking ({click_x}, {target_y})")
         run_applescript('tell application "WeChat" to activate')
         time.sleep(0.3)
-        subprocess.run(["cliclick", f"c:{click_x},{click_y}"], check=True, timeout=5)
-    else:
-        # Last resort fallback: click first chat in sidebar
-        print(f"  ⚠️  Could not find '{group_name}' in sidebar via OCR, trying first chat")
-        fallback_y = sidebar_region["y"] + 35
-        subprocess.run(["cliclick", f"c:{click_x},{fallback_y}"], check=True, timeout=5)
+        subprocess.run(["cliclick", f"c:{click_x},{target_y}"], check=True, timeout=5)
+        time.sleep(1.0)
 
-    time.sleep(1.0)
+        # Verify we landed in the right chat
+        if _verify_chat_title(group_name, window, layout):
+            print(f"  ✅ Chat verification passed: title bar matches '{group_name}'")
+            print(f"Navigated to: {group_name}")
+            return
+
+        # Sidebar click landed on wrong chat — fallback to search
+        print(f"  ⚠️  Sidebar click landed on wrong chat, falling back to search...")
+
+    else:
+        print(f"  Group '{group_name}' not visible in sidebar, searching...")
+
+    # --- Strategy 2: search via Cmd+F ---
+    _search_and_enter()
+
+    # --- Verification Step 2: title bar shows correct group name ---
+    if _verify_chat_title(group_name, window, layout):
+        print(f"  ✅ Chat verification passed: title bar matches '{group_name}'")
+    else:
+        raise RuntimeError(
+            f"Navigation failed: title bar does not match '{group_name}'. "
+            "WeChat may have navigated to the wrong chat."
+        )
+
     print(f"Navigated to: {group_name}")
 
 
