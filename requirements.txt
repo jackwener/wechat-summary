@@ -3,3 +3,4 @@ pyobjc-framework-Quartz
 Pillow
 anthropic
 python-dotenv
+weasyprint

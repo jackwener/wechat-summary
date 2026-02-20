@@ -31,6 +31,7 @@ from pathlib import Path
 from capture import capture_chat
 from ocr import ocr_screenshots
 from summarize import summarize_chat, save_summary
+from pdf_export import export_pdf
 
 
 def _check_command_exists(command: str, errors: list[str]) -> None:
@@ -202,6 +203,7 @@ Examples:
     parser.add_argument("--output-dir", default="output", help="Summary output directory")
     parser.add_argument("--model", default="claude-sonnet-4-20250514", help="Claude model")
     parser.add_argument("--save-text", default=None, help="Save OCR text to file")
+    parser.add_argument("--no-pdf", action="store_true", help="Skip PDF generation")
 
     args = parser.parse_args()
 
@@ -269,9 +271,21 @@ Examples:
 
     filepath = save_summary(summary, output_dir=args.output_dir, group_name=args.group)
 
+    # Step 4: Export PDF (default)
+    pdf_path = None
+    if not args.no_pdf:
+        print(f"\n📄 Step 4: Exporting PDF...")
+        pdf_path = export_pdf(filepath)
+        if pdf_path:
+            print(f"   PDF saved to {pdf_path}")
+        else:
+            print(f"   ⚠️  PDF export failed (pandoc or weasyprint may not be installed)")
+
     print(f"\n{'=' * 60}")
     print(f"  ✅ Done!")
     print(f"  Summary: {filepath}")
+    if pdf_path:
+        print(f"  PDF:     {pdf_path}")
     print(f"{'=' * 60}")
 
     # Also print the summary
