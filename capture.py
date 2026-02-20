@@ -285,23 +285,46 @@ def _ocr_all_text(image_path: str) -> list[str]:
 
 def _verify_search_results(group_name: str, sidebar_region: dict) -> bool:
     """
-    Screenshot the sidebar area after search and OCR to verify
+    Screenshot the search results area and OCR to verify
     the search results contain the target group name.
+
+    Uses an expanded region to cover WeChat's search results panel,
+    which may extend beyond the normal sidebar area.
     """
+    # Search results panel may be wider/taller than the sidebar — expand region
+    search_region = {
+        "x": sidebar_region["x"],
+        "y": sidebar_region["y"],
+        "width": sidebar_region["width"] + 100,  # search results can be wider
+        "height": sidebar_region["height"],
+    }
     path = "/tmp/_search_verify.png"
-    take_screenshot(sidebar_region, path)
+    take_screenshot(search_region, path)
     texts = _ocr_all_text(path)
     all_text = " ".join(texts).lower()
+    # Also create a version with all whitespace stripped for fuzzy matching
+    all_text_compact = all_text.replace(" ", "")
+
+    print(f"  Search OCR texts: {texts[:10]}")  # debug: show first 10 OCR blocks
 
     target_lower = group_name.lower()
-    target_parts = [p for p in target_lower.split() if len(p) > 1]
+    target_compact = target_lower.replace(" ", "")
 
-    # Check: exact match, substring, or key parts present
+    # Match 1: exact substring (with spaces)
     if target_lower in all_text:
         return True
-    for part in target_parts:
-        if part in all_text:
+
+    # Match 2: compact match (ignore spaces — handles OCR splitting "AI coding" etc.)
+    if target_compact in all_text_compact:
+        return True
+
+    # Match 3: key parts match (at least half of the parts found)
+    target_parts = [p for p in target_lower.split() if len(p) >= 1]
+    if target_parts:
+        matched = sum(1 for part in target_parts if part in all_text)
+        if matched >= max(1, len(target_parts) * 0.5):
             return True
+
     return False
 
 
