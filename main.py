@@ -58,7 +58,9 @@ def _check_command_exists(command: str, errors: list[str]) -> None:
         errors.append(f"Missing required command: {command}")
 
 
-def _check_wechat_permissions(errors: list[str]) -> dict | None:
+from typing import Optional, Dict, List, Union
+
+def _check_wechat_permissions(errors: List[str]) -> Optional[Dict]:
     """Check WeChat automation/accessibility permission via AppleScript."""
     script = """
     tell application "System Events"

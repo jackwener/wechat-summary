@@ -30,7 +30,9 @@ hr { border: none; border-top: 1px solid #ddd; margin: 16px 0; }
 """
 
 
-def export_pdf(md_path: str) -> str | None:
+from typing import Optional
+
+def export_pdf(md_path: str) -> Optional[str]:
     """
     Convert a Markdown file to PDF.
 

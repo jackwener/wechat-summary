@@ -12,7 +12,9 @@ from pathlib import Path
 CAPTURE_FILENAME_RE = re.compile(r"^(?P<prefix>\d{8}_\d{6})_page_(?P<page>\d+)\.png$")
 
 
-def _collect_screenshot_files(screenshot_dir: Path, file_paths: list[str] | None) -> list[Path]:
+from typing import Optional, List
+
+def _collect_screenshot_files(screenshot_dir: Path, file_paths: Optional[List[str]]) -> List[Path]:
     """
     Collect screenshot files for OCR.
 
@@ -54,7 +56,7 @@ def _collect_screenshot_files(screenshot_dir: Path, file_paths: list[str] | None
     return [f for f, _ in run_files]
 
 
-def collect_screenshot_files(screenshot_dir: Path, file_paths: list[str] | None = None) -> list[Path]:
+def collect_screenshot_files(screenshot_dir: Path, file_paths: Optional[List[str]] = None) -> List[Path]:
     """Public wrapper for screenshot file discovery and ordering."""
     return _collect_screenshot_files(screenshot_dir, file_paths)
 
@@ -271,7 +273,7 @@ def deduplicate_pages(
 def ocr_screenshots(
     screenshot_dir: str = "screenshots",
     languages: list[str] = None,
-    file_paths: list[str] | None = None,
+    file_paths: Optional[List[str]] = None,
 ) -> str:
     """
     OCR all screenshots in a directory and merge into a single text.

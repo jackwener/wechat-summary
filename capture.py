@@ -211,7 +211,9 @@ def detect_layout(window: dict) -> dict:
     return layout
 
 
-def get_chat_area(window: dict, layout: dict | None = None) -> dict:
+from typing import Optional, Dict
+
+def get_chat_area(window: Dict, layout: Optional[Dict] = None) -> Dict:
     """
     Return the chat message area region.
     If layout is provided, use detected coordinates.
@@ -303,7 +305,7 @@ def _verify_search_results(group_name: str, sidebar_region: dict) -> bool:
     return False
 
 
-def _verify_chat_title(group_name: str, window: dict, layout: dict | None) -> bool:
+def _verify_chat_title(group_name: str, window: Dict, layout: Optional[Dict]) -> bool:
     """
     Screenshot the chat title bar area and OCR to verify
     we entered the correct group chat.
@@ -347,7 +349,7 @@ def _verify_chat_title(group_name: str, window: dict, layout: dict | None) -> bo
     return False
 
 
-def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) -> None:
+def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = None) -> None:
     """
     Navigate to a specific group chat with screenshot-based verification.
 
@@ -374,7 +376,7 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
         }
         click_x = wx + 180
 
-    def _find_group_in_sidebar() -> int | None:
+    def _find_group_in_sidebar() -> Optional[int]:
         """Screenshot sidebar, OCR it, return screen y of matched group or None."""
         path = "/tmp/_sidebar_scan.png"
         take_screenshot(sidebar_region, path)
@@ -483,7 +485,7 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
     print(f"Navigated to: {group_name}")
 
 
-def _ocr_find_text_y(image_path: str, region: dict, target: str) -> int | None:
+def _ocr_find_text_y(image_path: str, region: Dict, target: str) -> Optional[int]:
     """
     OCR an image and return the screen y-coordinate of text matching target.
     Collects all matching candidates and prefers exact matches over fuzzy ones.
@@ -588,7 +590,7 @@ def capture_chat(
     max_pages: int = 30,
     output_dir: str = "screenshots",
     scroll_delay: float = 0.8,
-    group_name: str | None = None,
+    group_name: Optional[str] = None,
 ) -> list[str]:
     """
     Capture WeChat chat screenshots by scrolling up page by page.
