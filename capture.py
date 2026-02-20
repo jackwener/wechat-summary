@@ -301,7 +301,14 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
     if target_y is None:
         # Group not visible — search for it to bring it into sidebar
         print(f"  Group '{group_name}' not visible in sidebar, searching...")
-        subprocess.run(["cliclick", f"c:{search_x},{search_y}"], check=True, timeout=5)
+        # Use Cmd+F to activate search — more reliable than clicking search bar position
+        run_applescript('''
+        tell application "System Events"
+            tell process "WeChat"
+                keystroke "f" using command down
+            end tell
+        end tell
+        ''')
         time.sleep(0.5)
 
         subprocess.run(["pbcopy"], input=group_name.encode("utf-8"), check=True, timeout=5)
@@ -314,15 +321,17 @@ def navigate_to_chat(group_name: str, window: dict, layout: dict | None = None) 
         ''')
         time.sleep(1.5)
 
-        # Press Escape to close dropdown — searched group may now appear in sidebar
+        # Press Return to select the first search result — WeChat opens that chat directly
         run_applescript('''
         tell application "System Events"
-            key code 53
+            tell process "WeChat"
+                key code 36
+            end tell
         end tell
         ''')
-        time.sleep(0.5)
-
-        target_y = _find_group_in_sidebar()
+        time.sleep(1.0)
+        print(f"Navigated to: {group_name}")
+        return
 
     if target_y is not None:
         click_y = target_y
