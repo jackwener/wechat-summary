@@ -481,17 +481,79 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
                     "Please ensure the group chat name is correct and you are a member."
                 )
 
-        # Click on the search result instead of pressing Return —
-        # Return doesn't reliably select group chat results in WeChat search.
+        # Click on the group chat in search results.
+        # WeChat search shows: search suggestions at top, then "Group Chats" section.
+        # We must click the entry under "Group Chats", not the search suggestion.
         search_region = {
             "x": sidebar_region["x"],
             "y": sidebar_region["y"],
             "width": sidebar_region["width"] + 100,
             "height": sidebar_region["height"],
         }
-        search_screenshot = "/tmp/_search_verify.png"
+        search_screenshot = "/tmp/_search_click.png"
         take_screenshot(search_region, search_screenshot)
-        result_y = _ocr_find_text_y(search_screenshot, search_region, group_name)
+
+        # OCR with positions to find "Group Chats" header and group name entries
+        import Vision as _Vision
+        from Foundation import NSURL as _NSURL
+
+        _img_url = _NSURL.fileURLWithPath_(search_screenshot)
+        _req = _Vision.VNRecognizeTextRequest.alloc().init()
+        _req.setRecognitionLevel_(_Vision.VNRequestTextRecognitionLevelAccurate)
+        _req.setRecognitionLanguages_(["zh-Hans", "en"])
+        _handler = _Vision.VNImageRequestHandler.alloc().initWithURL_options_(_img_url, {})
+        _handler.performRequests_error_([_req], None)
+
+        from PIL import Image as _PILImage
+        _img = _PILImage.open(search_screenshot)
+        _img_h = _img.height
+        _scale = _img_h / search_region["height"] if search_region["height"] > 0 else 1
+
+        def _obs_screen_y(obs):
+            bbox = obs.boundingBox()
+            cy_px = (1.0 - bbox.origin.y - bbox.size.height / 2) * _img_h
+            return search_region["y"] + int(cy_px / _scale)
+
+        # Find section header y and all matching group name positions
+        group_chats_y = None
+        name_matches = []  # list of (screen_y, text)
+
+        target_norm = _ocr_normalize(group_name)
+        target_compact_norm = target_norm.replace(" ", "")
+
+        for obs in (_req.results() or []):
+            top = obs.topCandidates_(1)
+            if not top:
+                continue
+            text = top[0].string()
+            text_norm = _ocr_normalize(text)
+            text_compact_norm = text_norm.replace(" ", "")
+            sy = _obs_screen_y(obs)
+
+            # Detect "Group Chats" / "群聊" section header
+            tl = text.lower().strip()
+            if tl in ("group chats", "群聊") or "group chat" in tl:
+                group_chats_y = sy
+                continue
+
+            # Check if this text matches our group name
+            if (target_compact_norm == text_compact_norm or
+                    target_compact_norm in text_compact_norm or
+                    text_compact_norm in target_compact_norm):
+                name_matches.append((sy, text))
+
+        # Prefer match below "Group Chats" header
+        result_y = None
+        if group_chats_y is not None and name_matches:
+            below = [(y, t) for y, t in name_matches if y > group_chats_y]
+            if below:
+                result_y = below[0][0]
+                print(f"  Found '{below[0][1]}' under Group Chats section at y={result_y}")
+
+        # Fallback: use the last match (furthest down, most likely actual result)
+        if result_y is None and name_matches:
+            result_y = name_matches[-1][0]
+            print(f"  Using last match '{name_matches[-1][1]}' at y={result_y}")
 
         if result_y is not None:
             result_x = search_region["x"] + search_region["width"] // 2
@@ -500,7 +562,7 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
             time.sleep(0.2)
             subprocess.run(["cliclick", f"c:{result_x},{result_y}"], check=True, timeout=5)
         else:
-            # Fallback: press Return (may not always work)
+            # Fallback: press Return
             print(f"  ⚠️  Could not locate search result position, pressing Return as fallback")
             run_applescript('''
             tell application "System Events"
