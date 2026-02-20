@@ -16,7 +16,7 @@ from pathlib import Path
 PDF_CSS = """
 @page { size: A4; margin: 2cm; }
 body {
-    font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+    font-family: 'Heiti SC', 'Hiragino Sans GB', 'Arial Unicode MS', 'PingFang SC', sans-serif;
     font-size: 12px; line-height: 1.8; color: #333;
 }
 h1 { font-size: 20px; border-bottom: 2px solid #333; padding-bottom: 6px; }
