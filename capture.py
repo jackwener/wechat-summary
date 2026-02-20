@@ -574,6 +574,9 @@ def _ocr_find_text_y(image_path: str, region: Dict, target: str) -> Optional[int
     target_clean = target_lower.rstrip('.…。').strip()
     target_norm = _ocr_normalize(target)
     target_clean_norm = target_norm.rstrip('.…。').strip()
+    # Space-stripped versions for handling OCR inserting/missing spaces
+    target_compact = target_lower.replace(" ", "")
+    target_compact_norm = target_norm.replace(" ", "")
 
     # screencapture -R uses point coordinates but produces pixel-resolution images
     # On Retina displays, img_h (pixels) = region["height"] (points) * scale_factor
@@ -598,22 +601,30 @@ def _ocr_find_text_y(image_path: str, region: Dict, target: str) -> Optional[int
         text_clean = text_lower.rstrip('.…。').strip()
         text_norm = _ocr_normalize(text)
         text_clean_norm = text_norm.rstrip('.…。').strip()
+        # Space-stripped versions
+        text_compact = text_lower.replace(" ", "")
+        text_compact_norm = text_norm.replace(" ", "")
 
-        # Priority 0: exact match (after stripping dots), including OCR-normalized
-        if text_clean == target_clean or text_clean_norm == target_clean_norm:
+        # Priority 0: exact match (after stripping dots), including compact/normalized
+        if (text_clean == target_clean or text_clean_norm == target_clean_norm or
+                text_compact == target_compact or text_compact_norm == target_compact_norm):
             candidates.append((0, _get_screen_y(obs), text))
             continue
 
         # Priority 1: full substring match (target in text or text in target)
+        # Check with original, normalized, and compact variants
         if (target_lower in text_lower or text_lower in target_lower or
-                target_norm in text_norm or text_norm in target_norm):
+                target_norm in text_norm or text_norm in target_norm or
+                target_compact in text_compact or text_compact in target_compact or
+                target_compact_norm in text_compact_norm or text_compact_norm in target_compact_norm):
             candidates.append((1, _get_screen_y(obs), text))
             continue
 
         # Priority 2: prefix match (for truncated names)
         if len(text_clean) >= 5 and (
             target_clean.startswith(text_clean) or text_clean.startswith(target_clean) or
-            target_clean_norm.startswith(text_clean_norm) or text_clean_norm.startswith(target_clean_norm)
+            target_clean_norm.startswith(text_clean_norm) or text_clean_norm.startswith(target_clean_norm) or
+            target_compact.startswith(text_compact) or text_compact.startswith(target_compact)
         ):
             candidates.append((2, _get_screen_y(obs), text))
             continue
