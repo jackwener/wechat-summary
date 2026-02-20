@@ -381,7 +381,10 @@ def _ocr_find_text_y(image_path: str, region: dict, target: str) -> int | None:
     candidates = []  # list of (priority, screen_y, text)
 
     for obs in results:
-        text = obs.topCandidates_(1)[0].string()
+        top_candidates = obs.topCandidates_(1)
+        if not top_candidates:
+            continue
+        text = top_candidates[0].string()
         text_lower = text.lower()
         text_clean = text_lower.rstrip('.…。').strip()
 

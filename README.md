@@ -86,6 +86,7 @@ python main.py --pages 50
 | `--save-text` | 保存 OCR 中间结果到文件 | 不保存 |
 | `--model` | Claude 模型 | `claude-sonnet-4-20250514` |
 | `--delay` | 翻页间隔（秒） | `0.8` |
+| `--chunk-pages` | 分块总结时每块页数（超过后自动 chunking） | `500` |
 | `--from-text` | 跳过截图/OCR，直接从文本总结 | — |
 | `--from-screenshots` | 跳过截图，从已有截图做 OCR + 总结 | — |
 
@@ -97,6 +98,9 @@ python main.py --from-text ocr_output.txt --group "群聊名称"
 
 # 从已有截图重新 OCR + 总结
 python main.py --from-screenshots ./screenshots/ --group "群聊名称"
+
+# 超大群聊自动分块（每 500 页一个 chunk，总结后再汇总成一个最终 md/pdf）
+python main.py --group "群聊名称" --pages 2500 --chunk-pages 500
 ```
 
 ### 单独使用各模块

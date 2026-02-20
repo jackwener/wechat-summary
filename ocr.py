@@ -6,11 +6,71 @@ Supports Chinese (zh-Hans) and English, with deduplication across pages.
 """
 
 import os
+import re
 from pathlib import Path
 
-import Quartz
-import Vision
-from Foundation import NSURL
+CAPTURE_FILENAME_RE = re.compile(r"^(?P<prefix>\d{8}_\d{6})_page_(?P<page>\d+)\.png$")
+
+
+def _collect_screenshot_files(screenshot_dir: Path, file_paths: list[str] | None) -> list[Path]:
+    """
+    Collect screenshot files for OCR.
+
+    If file_paths is provided, preserve that explicit order.
+    If scanning a directory, auto-detect capture naming pattern and:
+      1. keep only the latest run when multiple runs are present
+      2. sort pages by descending page index (oldest -> newest)
+    """
+    if file_paths is not None:
+        files = [Path(p) for p in file_paths]
+        missing = [str(p) for p in files if not p.exists()]
+        if missing:
+            raise FileNotFoundError(f"Screenshot files not found: {missing[:3]}")
+        return files
+
+    files = sorted(screenshot_dir.glob("*.png"))
+    if not files:
+        raise FileNotFoundError(f"No PNG files found in {screenshot_dir}")
+
+    parsed = []
+    for f in files:
+        m = CAPTURE_FILENAME_RE.match(f.name)
+        if not m:
+            return files
+        parsed.append((f, m.group("prefix"), int(m.group("page"))))
+
+    prefixes = sorted({prefix for _, prefix, _ in parsed})
+    if len(prefixes) > 1:
+        latest = prefixes[-1]
+        print(
+            f"Detected {len(prefixes)} capture runs in {screenshot_dir}. "
+            f"Using latest run: {latest}"
+        )
+    else:
+        latest = prefixes[0]
+
+    run_files = [(f, page) for f, prefix, page in parsed if prefix == latest]
+    run_files.sort(key=lambda item: item[1], reverse=True)
+    return [f for f, _ in run_files]
+
+
+def collect_screenshot_files(screenshot_dir: Path, file_paths: list[str] | None = None) -> list[Path]:
+    """Public wrapper for screenshot file discovery and ordering."""
+    return _collect_screenshot_files(screenshot_dir, file_paths)
+
+
+def _import_vision_stack():
+    """Import macOS OCR frameworks lazily with a clear error message."""
+    try:
+        import Quartz
+        import Vision
+        from Foundation import NSURL
+    except ImportError as exc:
+        raise RuntimeError(
+            "OCR requires macOS Vision frameworks. "
+            "Install dependencies from requirements.txt in a macOS environment."
+        ) from exc
+    return Quartz, Vision, NSURL
 
 
 def recognize_text_in_image(image_path: str, languages: list[str] = None) -> list[dict]:
@@ -26,6 +86,8 @@ def recognize_text_in_image(image_path: str, languages: list[str] = None) -> lis
     """
     if languages is None:
         languages = ["zh-Hans", "en-US"]
+
+    Quartz, Vision, NSURL = _import_vision_stack()
 
     # Load image
     image_url = NSURL.fileURLWithPath_(os.path.abspath(image_path))
@@ -209,6 +271,7 @@ def deduplicate_pages(
 def ocr_screenshots(
     screenshot_dir: str = "screenshots",
     languages: list[str] = None,
+    file_paths: list[str] | None = None,
 ) -> str:
     """
     OCR all screenshots in a directory and merge into a single text.
@@ -216,15 +279,13 @@ def ocr_screenshots(
     Args:
         screenshot_dir: Directory containing screenshot PNGs
         languages: OCR languages
+        file_paths: Explicit screenshot file list (preserved order)
 
     Returns:
         Merged text from all screenshots
     """
     screenshot_dir = Path(screenshot_dir)
-    files = sorted(screenshot_dir.glob("*.png"))
-
-    if not files:
-        raise FileNotFoundError(f"No PNG files found in {screenshot_dir}")
+    files = _collect_screenshot_files(screenshot_dir, file_paths)
 
     print(f"Found {len(files)} screenshots to OCR...")
 

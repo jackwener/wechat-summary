@@ -5,14 +5,9 @@ Takes OCR-extracted chat text and generates a structured Markdown summary.
 """
 
 import os
+import re
 from pathlib import Path
 from datetime import datetime
-
-import anthropic
-from dotenv import load_dotenv
-
-load_dotenv(".env.local")
-
 
 def create_summary_prompt(chat_text: str) -> str:
     """Create the summarization prompt for Claude."""
@@ -80,6 +75,82 @@ def create_summary_prompt(chat_text: str) -> str:
 ```"""
 
 
+def create_chunk_summary_prompt(chat_text: str, chunk_index: int, total_chunks: int) -> str:
+    """Create prompt for a single chunk summary."""
+    return f"""你是一个微信群聊总结助手。以下是第 {chunk_index}/{total_chunks} 个聊天记录分块。
+
+请输出该分块的结构化摘要，重点保留事实、结论、分歧、行动项、资源链接。
+不要臆测，不要补充聊天中不存在的信息。
+
+## 输出格式（Markdown）
+
+### Chunk {chunk_index} 概要
+- 2-4 句，说明该分块主要讨论了什么
+
+### Chunk {chunk_index} 关键讨论点
+- 按主题列出核心观点，尽量标注发言人
+
+### Chunk {chunk_index} 结论与决定
+- 若没有，写“无明确结论”
+
+### Chunk {chunk_index} Action Items
+- [ ] 事项 (负责人: xxx / 未明确)
+
+### Chunk {chunk_index} 资源与链接
+- 资源名称: 链接（如有）
+
+---
+
+## 分块聊天记录
+
+```
+{chat_text}
+```"""
+
+
+def create_merge_summary_prompt(chunk_summaries: list[str]) -> str:
+    """Create prompt to merge chunk summaries into one final summary."""
+    joined = "\n\n".join(
+        f"## 分块摘要 {index}\n{summary}"
+        for index, summary in enumerate(chunk_summaries, start=1)
+    )
+    return f"""你是一个微信群聊总结助手。下面是多个分块摘要，请合并成最终总结。
+
+要求：
+1. 合并重复信息，保留时间脉络和话题结构
+2. 冲突观点要并列呈现，不要擅自裁决
+3. Action Items 去重并尽量补全负责人
+4. 链接与资源去重后按主题归类
+5. 输出中文，使用 Markdown
+
+最终输出格式必须是：
+
+# 群聊总结 — [日期]
+
+## 📝 讨论纪要
+（按时间顺序整理，按话题分段，保留关键细节和发言人）
+
+## 📋 概要
+（一段话概括）
+
+## 💬 话题讨论
+### 话题 1: [话题名称]
+- **[发言人]**: 观点
+
+## ✅ Action Items
+- [ ] 事项 (负责人: xxx)
+
+## 🔗 分享的资源
+- [资源描述](链接)
+
+---
+
+## 分块摘要输入
+
+{joined}
+"""
+
+
 def summarize_chat(
     chat_text: str,
     model: str = "claude-sonnet-4-20250514",
@@ -96,6 +167,61 @@ def summarize_chat(
     Returns:
         Markdown-formatted summary
     """
+    client = _build_anthropic_client()
+    prompt = create_summary_prompt(chat_text)
+    return _send_prompt(client, prompt, model, max_tokens, label="full summary")
+
+
+def summarize_chat_in_chunks(
+    chat_chunks: list[str],
+    model: str = "claude-sonnet-4-20250514",
+    max_tokens: int = 8192,
+    chunk_max_tokens: int = 4096,
+) -> str:
+    """Summarize chunk texts first, then merge into one final summary."""
+    usable_chunks = [chunk for chunk in chat_chunks if chunk and chunk.strip()]
+    if not usable_chunks:
+        raise ValueError("No non-empty chat chunks provided.")
+    if len(usable_chunks) == 1:
+        return summarize_chat(usable_chunks[0], model=model, max_tokens=max_tokens)
+
+    client = _build_anthropic_client()
+    chunk_summaries = []
+
+    for index, chunk_text in enumerate(usable_chunks, start=1):
+        prompt = create_chunk_summary_prompt(chunk_text, index, len(usable_chunks))
+        chunk_summary = _send_prompt(
+            client,
+            prompt,
+            model,
+            chunk_max_tokens,
+            label=f"chunk {index}/{len(usable_chunks)}",
+        )
+        chunk_summaries.append(chunk_summary)
+
+    merge_prompt = create_merge_summary_prompt(chunk_summaries)
+    return _send_prompt(client, merge_prompt, model, max_tokens, label="final merge")
+
+
+def _load_local_env() -> None:
+    """Load .env.local when python-dotenv is available."""
+    try:
+        from dotenv import load_dotenv
+    except Exception:  # noqa: BLE001
+        return
+    load_dotenv(".env.local", override=False)
+
+
+def _build_anthropic_client():
+    """Create Anthropic client after loading environment."""
+    _load_local_env()
+    try:
+        import anthropic
+    except ImportError as exc:
+        raise RuntimeError(
+            "Anthropic SDK is not installed. Install dependencies from requirements.txt."
+        ) from exc
+
     api_key = os.environ.get("ANTHROPIC_AUTH_TOKEN") or os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         raise ValueError(
@@ -104,11 +230,12 @@ def summarize_chat(
         )
 
     base_url = os.environ.get("ANTHROPIC_BASE_URL")
-    client = anthropic.Anthropic(api_key=api_key, **(dict(base_url=base_url) if base_url else {}))
+    return anthropic.Anthropic(api_key=api_key, **(dict(base_url=base_url) if base_url else {}))
 
-    prompt = create_summary_prompt(chat_text)
 
-    print(f"Sending {len(chat_text)} chars to Claude ({model})...")
+def _send_prompt(client, prompt: str, model: str, max_tokens: int, label: str) -> str:
+    """Send prompt to Claude and return concatenated text blocks."""
+    print(f"Sending {len(prompt)} chars to Claude ({model}) for {label}...")
 
     message = client.messages.create(
         model=model,
@@ -116,10 +243,13 @@ def summarize_chat(
         messages=[{"role": "user", "content": prompt}],
     )
 
-    summary = message.content[0].text
-    print(f"Summary generated: {len(summary)} chars")
-    print(f"Tokens used: input={message.usage.input_tokens}, output={message.usage.output_tokens}")
+    text_blocks = [block.text for block in message.content if hasattr(block, "text")]
+    summary = "\n".join(text_blocks).strip()
+    if not summary:
+        raise RuntimeError(f"Claude returned empty response for {label}.")
 
+    print(f"{label} generated: {len(summary)} chars")
+    print(f"Tokens used: input={message.usage.input_tokens}, output={message.usage.output_tokens}")
     return summary
 
 
@@ -142,13 +272,24 @@ def save_summary(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    safe_group = _sanitize_filename_component(group_name)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    filename = f"{date_str}_{group_name}.md"
+    filename = f"{date_str}_{safe_group}.md"
     filepath = out / filename
 
     filepath.write_text(summary, encoding="utf-8")
+    if safe_group != group_name:
+        print(f"Group name sanitized for filename: {safe_group}")
     print(f"Summary saved to {filepath}")
     return str(filepath)
+
+
+def _sanitize_filename_component(value: str) -> str:
+    """Sanitize user input for safe cross-platform filenames."""
+    cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", value).strip().strip(".")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned[:80]
+    return cleaned or "group"
 
 
 if __name__ == "__main__":
