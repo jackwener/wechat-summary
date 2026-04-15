@@ -116,6 +116,9 @@ def press_enter() -> None:
     tell application "System Events"
         tell process "WeChat"
             key code 36
+        end tell
+    end tell
+    ''')
 
 
 def press_escape() -> None:
