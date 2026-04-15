@@ -101,6 +101,7 @@ class Snapshot:
         from wechat.ocr import ocr_normalize
 
         texts = self.all_texts()
+        print(f"  Verify OCR texts: {texts[:10]}")
         all_text = " ".join(texts).lower()
         all_text_compact = all_text.replace(" ", "")
         all_text_norm = ocr_normalize(" ".join(texts))
@@ -123,6 +124,14 @@ class Snapshot:
             matched = sum(1 for part in target_parts if part in all_text or ocr_normalize(part) in all_text_norm)
             if matched >= max(1, len(target_parts) * 0.5):
                 return True
+
+        # Handle truncated WeChat titles: "...流群（499）" for long group names.
+        # Check if any trailing suffix of the target appears in the OCR text.
+        if len(target_lower) >= 4:
+            for suffix_len in range(min(len(target_lower), 10), 2, -1):
+                suffix = target_lower[-suffix_len:].replace(" ", "")
+                if len(suffix) >= 3 and suffix in all_text_compact:
+                    return True
 
         return False
 
@@ -204,6 +213,7 @@ class Snapshot:
         Parse OCR results into section-aware buckets for search results.
         Returns dict of section_name → list of Element.
         """
+        from difflib import SequenceMatcher
         from wechat.ocr import ocr_normalize, _match_section_header, _find_containing_section, _SECTION_HEADER_PATTERNS
 
         target_norm = ocr_normalize(target_name)
@@ -243,9 +253,21 @@ class Snapshot:
         section_headers.sort(key=lambda h: h[0])
         print(f"  Detected section headers: {[(name, y) for y, name in section_headers]}")
 
-        # Classify matches into sections, returning Elements
+        # Classify matches into sections, returning Elements.
+        # "unknown" bucket catches items before the first section header
+        # (WeChat shows Group Chats at the top without a labelled header).
         sections: dict[str, list] = {name: [] for name in _SECTION_HEADER_PATTERNS}
+        sections["unknown"] = []
         click_x = self.region["x"] + self.region["width"] // 2
+
+        def _text_matches(text_norm_compact: str) -> bool:
+            if (target_compact_norm == text_norm_compact or
+                    target_compact_norm in text_norm_compact or
+                    text_norm_compact in target_compact_norm):
+                return True
+            # Fuzzy match: tolerates OCR errors (O↔C, l↔I↔1, 交↔父, 群↔苟…)
+            sim = SequenceMatcher(None, target_compact_norm, text_norm_compact).ratio()
+            return sim >= 0.55
 
         for i, (sy, tl, text_orig) in enumerate(all_blocks):
             if i in used_indices:
@@ -254,9 +276,7 @@ class Snapshot:
             text_norm = ocr_normalize(text_orig)
             text_compact_norm = text_norm.replace(" ", "")
 
-            if not (target_compact_norm == text_compact_norm or
-                    target_compact_norm in text_compact_norm or
-                    text_compact_norm in target_compact_norm):
+            if not _text_matches(text_compact_norm):
                 continue
 
             containing = _find_containing_section(sy, section_headers)

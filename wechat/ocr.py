@@ -8,6 +8,10 @@ Note: OCR execution and text search are now in Snapshot (element.py).
 This module retains shared helpers used by both Snapshot and Locator.
 """
 
+import os
+import tempfile
+from difflib import SequenceMatcher
+from pathlib import Path
 from typing import Optional
 
 
@@ -73,8 +77,17 @@ def select_candidates_by_type(sections: dict[str, list], target_type: str) -> li
         if candidates:
             return candidates
 
+    # When the preferred section header wasn't OCR'd, items before the first
+    # detected header land in "unknown".  WeChat shows Group Chats at the very
+    # top of search results, so "unknown" items are the most likely group match.
+    unknown = sections.get("unknown", [])
+    if unknown and target_type in ("group", "any"):
+        print(f"  ℹ️  Group Chats header not detected; using {len(unknown)} 'unknown' candidate(s) (likely top-of-results group entries)")
+        return unknown
+
+    # Last resort: any non-internet, non-unknown section
     for section_name, matches in sections.items():
-        if matches and section_name != "internet_search":
+        if matches and section_name not in ("internet_search", "unknown"):
             print(f"  ⚠️  No match in preferred sections, falling back to '{section_name}'")
             return matches
 

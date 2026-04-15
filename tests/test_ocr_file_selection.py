@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from ocr import _collect_screenshot_files
+from ocr import collect_screenshot_files
 
 
 class TestCollectScreenshotFiles(unittest.TestCase):
@@ -18,7 +18,7 @@ class TestCollectScreenshotFiles(unittest.TestCase):
             ]:
                 (root / name).write_bytes(b"x")
 
-            files = _collect_screenshot_files(root, None)
+            files = collect_screenshot_files(root, None)
             names = [f.name for f in files]
 
             self.assertEqual(
@@ -38,7 +38,7 @@ class TestCollectScreenshotFiles(unittest.TestCase):
             first.write_bytes(b"x")
             second.write_bytes(b"x")
 
-            files = _collect_screenshot_files(root, [str(second), str(first)])
+            files = collect_screenshot_files(root, [str(second), str(first)])
             names = [f.name for f in files]
 
             self.assertEqual(names, ["b.png", "a.png"])

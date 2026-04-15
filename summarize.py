@@ -6,6 +6,7 @@ Takes OCR-extracted chat text and generates a structured Markdown summary.
 
 import os
 import re
+import time
 from pathlib import Path
 from datetime import datetime
 
@@ -72,9 +73,9 @@ def create_summary_prompt(chat_text: str) -> str:
 
 ## 聊天记录
 
-```
+<chat_log>
 {chat_text}
-```"""
+</chat_log>"""
 
 
 def create_chunk_summary_prompt(chat_text: str, chunk_index: int, total_chunks: int) -> str:
@@ -105,9 +106,9 @@ def create_chunk_summary_prompt(chat_text: str, chunk_index: int, total_chunks: 
 
 ## 分块聊天记录
 
-```
+<chat_log>
 {chat_text}
-```"""
+</chat_log>"""
 
 
 def create_merge_summary_prompt(chunk_summaries: list[str]) -> str:
@@ -235,24 +236,54 @@ def _build_anthropic_client():
     return anthropic.Anthropic(api_key=api_key, **(dict(base_url=base_url) if base_url else {}))
 
 
-def _send_prompt(client, prompt: str, model: str, max_tokens: int, label: str) -> str:
-    """Send prompt to Claude and return concatenated text blocks."""
+def _send_prompt(
+    client,
+    prompt: str,
+    model: str,
+    max_tokens: int,
+    label: str,
+    max_retries: int = 3,
+) -> str:
+    """Send prompt to Claude and return concatenated text blocks, with retry on transient errors."""
+    import anthropic
+
     print(f"Sending {len(prompt)} chars to Claude ({model}) for {label}...")
 
-    message = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        messages=[{"role": "user", "content": prompt}],
-    )
+    for attempt in range(max_retries):
+        try:
+            message = client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text_blocks = [block.text for block in message.content if hasattr(block, "text")]
+            summary = "\n".join(text_blocks).strip()
+            if not summary:
+                raise RuntimeError(f"Claude returned empty response for {label}.")
+            print(f"{label} generated: {len(summary)} chars")
+            print(f"Tokens used: input={message.usage.input_tokens}, output={message.usage.output_tokens}")
+            return summary
 
-    text_blocks = [block.text for block in message.content if hasattr(block, "text")]
-    summary = "\n".join(text_blocks).strip()
-    if not summary:
-        raise RuntimeError(f"Claude returned empty response for {label}.")
+        except anthropic.BadRequestError as exc:
+            # Content filter (BigModel error 1301) or malformed request — not retryable.
+            err_str = str(exc)
+            if "1301" in err_str or "unsafe" in err_str.lower() or "sensitive" in err_str.lower():
+                print(f"  ⚠️  Content filter triggered for {label}: {exc}. Returning placeholder.")
+                return f"[内容被过滤，无法生成摘要 — {label}]"
+            raise RuntimeError(f"Claude API bad request for {label}: {exc}") from exc
 
-    print(f"{label} generated: {len(summary)} chars")
-    print(f"Tokens used: input={message.usage.input_tokens}, output={message.usage.output_tokens}")
-    return summary
+        except (
+            anthropic.RateLimitError,
+            anthropic.APIConnectionError,
+            anthropic.APITimeoutError,
+            anthropic.InternalServerError,
+        ) as exc:
+            if attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)  # 2s, 4s
+                print(f"  ⚠️  Transient API error ({type(exc).__name__}): {exc}. Retrying in {wait}s... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(wait)
+            else:
+                raise RuntimeError(f"Claude API failed after {max_retries} attempts for {label}: {exc}") from exc
 
 
 def save_summary(

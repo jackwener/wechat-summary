@@ -6,6 +6,9 @@ by finding the largest color jumps in the screenshot.
 Works in both light and dark mode.
 """
 
+import os
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 from PIL import Image
@@ -13,15 +16,35 @@ from PIL import Image
 from wechat.actions import screenshot
 
 
-def detect_layout(window: dict) -> dict:
+def detect_layout(window: dict, retries: int = 2) -> dict:
     """
     Screenshot the full WeChat window and detect UI regions by pixel scanning.
 
     Returns a dict with keys:
         icon_col_right, sidebar_right, titlebar_bottom, inputbox_top,
         sidebar, chat_area, search_box_center, sidebar_center_x, scale
+
+    Retries up to `retries` times (with a short sleep) to handle transient
+    states where WeChat's window is still transitioning (e.g. search overlay).
     """
-    path = "/tmp/_layout_detect.png"
+    import time as _time
+    fd, path = tempfile.mkstemp(suffix=".png", prefix="_wechat_layout_")
+    os.close(fd)
+    try:
+        layout = _detect_layout_from_file(window, path)
+        # If fallback was used (sidebar looks wrong), retry once after a short pause
+        ww = window["width"]
+        for _ in range(retries):
+            if layout["sidebar_right"] >= int(ww * 0.28):
+                break
+            _time.sleep(0.4)
+            layout = _detect_layout_from_file(window, path)
+        return layout
+    finally:
+        Path(path).unlink(missing_ok=True)
+
+
+def _detect_layout_from_file(window: dict, path: str) -> dict:
     screenshot(window, path)
     img = Image.open(path)
     iw, ih = img.size
@@ -62,8 +85,11 @@ def detect_layout(window: dict) -> dict:
         if edge_votes[sidebar_right_px] < 2:
             sidebar_right_px = None
 
-    if sidebar_right_px is None:
-        sidebar_right_px = int(iw * 0.25)
+    # WeChat sidebar is typically 35–42 % of window width.
+    # The old 0.25 fallback was too narrow (icon-column width, not sidebar right).
+    _min_plausible_px = int(iw * 0.28)  # ~210pt for 756pt window
+    if sidebar_right_px is None or sidebar_right_px < _min_plausible_px:
+        sidebar_right_px = int(iw * 0.38)  # ~287pt — good WeChat default
         print(f"  ⚠️  Could not detect sidebar divider, using fallback: {sidebar_right_px/scale:.0f}pt")
 
     sidebar_right_pt = int(sidebar_right_px / scale)

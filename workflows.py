@@ -40,12 +40,14 @@ def navigate_to_chat(
         actions.activate_wechat()
         time.sleep(0.1)
         elem.click()
-        time.sleep(1.0)
-
-        if locator.verify_chat_title(group_name):
-            print(f"  ✅ Chat verification passed: title bar matches '{group_name}'")
-            print(f"Navigated to: {group_name}")
-            return
+        # Retry verification twice to handle slow chat transitions.
+        for wait in (1.0, 1.5):
+            time.sleep(wait)
+            if locator.verify_chat_title(group_name):
+                print(f"  ✅ Chat verification passed: title bar matches '{group_name}'")
+                print(f"Navigated to: {group_name}")
+                return
+            print(f"  ↩  Title not matched yet (waited {wait}s), retrying...")
 
         print(f"  ⚠️  Sidebar click landed on wrong chat, falling back to search...")
     else:
@@ -53,6 +55,13 @@ def navigate_to_chat(
 
     # --- Strategy 2: Search via Cmd+F ---
     _search_and_click(locator, group_name, target_type)
+
+    # --- Dismiss search panel (restores sidebar) ---
+    # After clicking a search result WeChat keeps the search overlay open.
+    # Pressing Escape closes it so that layout re-detection sees the normal
+    # sidebar/chat divider instead of the search panel's different boundary.
+    actions.press_escape()
+    time.sleep(0.4)
 
     # --- Verify title bar ---
     if locator.verify_chat_title(group_name):

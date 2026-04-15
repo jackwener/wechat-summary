@@ -1,6 +1,7 @@
-pyobjc-framework-Vision
-pyobjc-framework-Quartz
-Pillow
-anthropic
-python-dotenv
-weasyprint
+pyobjc-framework-Vision>=10.0
+pyobjc-framework-Quartz>=10.0
+Pillow>=10.0
+anthropic>=0.40.0
+python-dotenv>=1.0.0
+weasyprint>=62.0
+# PDF export also requires: brew install pandoc

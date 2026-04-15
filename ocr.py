@@ -8,13 +8,12 @@ Supports Chinese (zh-Hans) and English, with deduplication across pages.
 import os
 import re
 from pathlib import Path
+from typing import Optional, List
 
 CAPTURE_FILENAME_RE = re.compile(r"^(?P<prefix>\d{8}_\d{6})_page_(?P<page>\d+)\.png$")
 
 
-from typing import Optional, List
-
-def _collect_screenshot_files(screenshot_dir: Path, file_paths: Optional[List[str]]) -> List[Path]:
+def collect_screenshot_files(screenshot_dir: Path, file_paths: Optional[List[str]] = None) -> List[Path]:
     """
     Collect screenshot files for OCR.
 
@@ -56,9 +55,6 @@ def _collect_screenshot_files(screenshot_dir: Path, file_paths: Optional[List[st
     return [f for f, _ in run_files]
 
 
-def collect_screenshot_files(screenshot_dir: Path, file_paths: Optional[List[str]] = None) -> List[Path]:
-    """Public wrapper for screenshot file discovery and ordering."""
-    return _collect_screenshot_files(screenshot_dir, file_paths)
 
 
 def _import_vision_stack():
@@ -287,7 +283,7 @@ def ocr_screenshots(
         Merged text from all screenshots
     """
     screenshot_dir = Path(screenshot_dir)
-    files = _collect_screenshot_files(screenshot_dir, file_paths)
+    files = collect_screenshot_files(screenshot_dir, file_paths)
 
     print(f"Found {len(files)} screenshots to OCR...")
 

@@ -9,6 +9,9 @@ Uses Snapshot internally to cache screenshots + OCR results,
 avoiding redundant captures within the same operation.
 """
 
+import os
+import tempfile
+from pathlib import Path
 from typing import Optional
 
 from wechat import actions
@@ -150,19 +153,27 @@ class Locator:
         return Element(text=result_text, position=(result_x, result_y), region=target_type)
 
     def title_region(self) -> dict:
-        """Return the chat title bar region (top ~50pt right of sidebar)."""
+        """Return the chat title bar region (right of sidebar, full header height)."""
         wx, wy = self.window["x"], self.window["y"]
         ww = self.window["width"]
         sidebar_right = self.layout["sidebar_right"] if self.layout else int(ww * 0.25)
+        # Use detected titlebar_bottom so the group name text is fully covered.
+        # Fixed height of 50pt can cut off the name if macOS title bar + WeChat
+        # header together are taller than 50pt.
+        title_height = (self.layout["titlebar_bottom"] + 10) if self.layout else 80
         return {
             "x": wx + sidebar_right,
             "y": wy,
             "width": ww - sidebar_right,
-            "height": 50,
+            "height": title_height,
         }
 
-    def verify_chat_title(self, name: str) -> bool:
+    def verify_chat_title(self, name: str, debug_save: Optional[str] = None) -> bool:
         """Check if the chat title bar shows the expected name."""
+        # Ensure WeChat is frontmost before screenshotting the title bar.
+        # Without this explicit activate, another window can cover WeChat
+        # between the Quartz click and the screenshot (blank [] result).
+        actions.activate_wechat()
         try:
             self.window = actions.get_window_info()
         except Exception:  # noqa: BLE001

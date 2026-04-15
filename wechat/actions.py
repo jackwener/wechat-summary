@@ -116,6 +116,14 @@ def press_enter() -> None:
     tell application "System Events"
         tell process "WeChat"
             key code 36
+
+
+def press_escape() -> None:
+    """Press Escape in WeChat (dismiss search, close overlays)."""
+    run_applescript('''
+    tell application "System Events"
+        tell process "WeChat"
+            key code 53
         end tell
     end tell
     ''')
@@ -133,8 +141,19 @@ def page_up() -> None:
 
 
 def image_hash(filepath: str) -> str:
-    """Compute a perceptual hash to detect duplicate screenshots."""
-    import hashlib
-    img = Image.open(filepath)
-    img = img.resize((64, 64)).convert("L")
-    return hashlib.md5(img.tobytes()).hexdigest()
+    """Compute a difference hash (dHash) to detect duplicate screenshots.
+
+    dHash compares adjacent pixel brightness in each row, producing a 64-bit
+    fingerprint that is robust to minor rendering differences (antialiasing,
+    subpixel variance). Returns the same hash only when visual content is
+    essentially identical — unlike raw MD5 which changes on any pixel difference.
+    """
+    img = Image.open(filepath).resize((9, 8), Image.LANCZOS).convert("L")
+    pixels = img.load()
+    bits = [
+        pixels[col, row] > pixels[col + 1, row]
+        for row in range(8)
+        for col in range(8)
+    ]
+    value = sum(bit << (63 - i) for i, bit in enumerate(bits))
+    return f"{value:016x}"

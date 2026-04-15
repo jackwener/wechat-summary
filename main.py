@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional, Dict, List
 
 
 def _load_local_env() -> None:
@@ -57,8 +58,6 @@ def _check_command_exists(command: str, errors: list[str]) -> None:
     else:
         errors.append(f"Missing required command: {command}")
 
-
-from typing import Optional, Dict, List, Union
 
 def _check_wechat_permissions(errors: List[str]) -> Optional[Dict]:
     """Check WeChat automation/accessibility permission via AppleScript."""
