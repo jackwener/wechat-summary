@@ -2,6 +2,7 @@
 workflows.py — High-level workflows composing Locate + Act.
 
 Each workflow is a sequence of Locate(element) → Act(action) steps.
+Element.click() bridges Locate and Act — the element knows its position.
 """
 
 import os
@@ -24,21 +25,21 @@ def navigate_to_chat(
     Navigate to a specific chat.
 
     Strategy:
-    1. Locate(sidebar_item) → Act(click) — try sidebar first
-    2. If not found: Act(cmd_f) → Act(type) → Locate(search_result) → Act(click)
+    1. Locate(sidebar_item) → elem.click()
+    2. If not found: Act(cmd_f) → Act(type) → Locate(search_result) → elem.click()
     3. Verify via Locate(chat_title)
 
     Raises RuntimeError if navigation fails.
     """
 
     # --- Strategy 1: Locate in sidebar, click ---
-    pos = locator.sidebar_item(group_name)
+    elem = locator.sidebar_item(group_name)
 
-    if pos is not None:
-        print(f"  Found '{group_name}' in sidebar at {pos}, clicking...")
+    if elem is not None:
+        print(f"  Found '{group_name}' in sidebar: {elem}")
         actions.activate_wechat()
         time.sleep(0.1)
-        actions.click(*pos)
+        elem.click()
         time.sleep(1.0)
 
         if locator.verify_chat_title(group_name):
@@ -70,7 +71,7 @@ def _search_and_click(
     group_name: str,
     target_type: str,
 ) -> None:
-    """Act(cmd_f) → Act(type) → verify → Locate(search_result) → Act(click)."""
+    """Act(cmd_f) → Act(type) → verify → Locate(search_result) → elem.click()."""
     print(f"  Searching for '{group_name}' via Cmd+F...")
 
     # Act: open search
@@ -80,7 +81,7 @@ def _search_and_click(
     actions.type_text(group_name)
     time.sleep(1.5)
 
-    # Verify search results contain target
+    # Verify search results contain target (uses Snapshot internally)
     if locator.verify_search_results(group_name):
         print(f"  ✅ Search verification passed: found '{group_name}' in search results")
     else:
@@ -98,19 +99,19 @@ def _search_and_click(
                 "Please ensure the chat name is correct and you are a member."
             )
 
-    # Locate: find the correct search result
-    pos = locator.search_result(group_name, target_type)
+    # Locate: find the correct search result (reuses Snapshot from verify)
+    elem = locator.search_result(group_name, target_type)
 
-    if pos is None:
+    if elem is None:
         raise RuntimeError(
             f"Navigation failed: no match for '{group_name}' found in "
             f"{describe_target_type(target_type)} section(s)."
         )
 
     # Act: click the search result
-    print(f"  Clicking search result at {pos}")
+    print(f"  Clicking search result: {elem}")
     actions.activate_wechat()
-    actions.click(*pos)
+    elem.click()
     time.sleep(1.0)
 
 
@@ -125,38 +126,29 @@ def send_message(
 
     Workflow:
     1. (Optional) navigate_to_chat if group_name specified
-    2. Locate(input_box) → Act(click)
+    2. Locate(input_box) → elem.click()
     3. Act(type_text) — paste message
     4. Act(press_enter) — send
-
-    Args:
-        locator: Locator instance.
-        message: Text message to send.
-        group_name: If provided, navigate to this chat first.
-        target_type: Chat type for navigation ("group", "contact", "any").
     """
     if not message.strip():
         raise ValueError("Message cannot be empty.")
 
-    # Step 1: Navigate if needed
     if group_name:
         navigate_to_chat(locator, group_name, target_type=target_type)
         time.sleep(0.5)
         locator.refresh()
 
-    # Step 2: Locate input box → click
-    pos = locator.input_box()
-    print(f"  Clicking input box at {pos}")
+    # Locate input box → click
+    elem = locator.input_box()
+    print(f"  Clicking input box: {elem}")
     actions.activate_wechat()
-    actions.click(*pos)
+    elem.click()
     time.sleep(0.3)
 
-    # Step 3: Type message
+    # Type and send
     print(f"  Typing message ({len(message)} chars)")
     actions.type_text(message)
     time.sleep(0.3)
-
-    # Step 4: Send (Enter)
     actions.press_enter()
     print(f"  ✅ Message sent")
 
@@ -171,7 +163,7 @@ def capture_screenshots(
     Capture chat screenshots by scrolling up page by page.
 
     Workflow:
-    1. Locate(chat_area) → Act(click) for focus
+    1. Locate(chat_area_center) → elem.click() for focus
     2. Loop: Act(screenshot) → Act(page_up)
     3. Detect duplicates (reached top) → stop
 
@@ -184,9 +176,9 @@ def capture_screenshots(
     print(f"Window: {locator.window}")
     print(f"Chat area: {chat_area}")
 
-    # Act: click chat area for keyboard focus
-    cx, cy = locator.chat_area_center()
-    actions.click(cx, cy)
+    # Click chat area for keyboard focus
+    center = locator.chat_area_center()
+    center.click()
     time.sleep(0.5)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
