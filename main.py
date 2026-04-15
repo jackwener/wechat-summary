@@ -162,8 +162,7 @@ def run_preflight_checks(
         for command in ["osascript", "screencapture"]:
             _check_command_exists(command, errors)
         if require_navigation:
-            for command in ["cliclick", "pbcopy"]:
-                _check_command_exists(command, errors)
+            _check_command_exists("pbcopy", errors)
 
         window = _check_wechat_permissions(errors)
         if window:
