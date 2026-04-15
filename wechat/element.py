@@ -6,10 +6,8 @@ Snapshot: a cached screenshot + OCR result for a screen region.
 """
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
-
-from wechat import actions
 
 
 @dataclass
@@ -22,6 +20,7 @@ class Element:
 
     def click(self) -> None:
         """Click this element."""
+        from wechat import actions
         actions.click(*self.position)
 
     def __bool__(self) -> bool:
@@ -48,9 +47,10 @@ class Snapshot:
         self.region_name = region_name
         self.timestamp = time.time()
 
-        # Take screenshot
+        # Take screenshot (lazy import to avoid circular dependency)
+        from wechat import actions as _actions
         self._image_path = image_path or f"/tmp/_snapshot_{region_name or 'unknown'}.png"
-        actions.screenshot(region, self._image_path)
+        _actions.screenshot(region, self._image_path)
 
         # Run OCR once
         self._ocr_observations = self._run_ocr()
@@ -86,14 +86,6 @@ class Snapshot:
         bbox = obs.boundingBox()
         cy_px = (1.0 - bbox.origin.y - bbox.size.height / 2) * self._img_height
         return self.region["y"] + int(cy_px / self._scale)
-
-    def _obs_screen_x(self, obs) -> int:
-        """Convert a Vision observation's bounding box to screen x coordinate."""
-        bbox = obs.boundingBox()
-        cx_px = (bbox.origin.x + bbox.size.width / 2) * self._img_height * (
-            self.region["width"] / self.region["height"]
-        ) if self.region["height"] > 0 else 0
-        return self.region["x"] + int(cx_px / self._scale)
 
     def all_texts(self) -> list[str]:
         """Return all OCR-recognized text strings."""
@@ -269,7 +261,7 @@ class Snapshot:
 
             containing = _find_containing_section(sy, section_headers)
             elem = Element(text=text_orig, position=(click_x, sy), region=containing)
-            sections[containing].append(elem)
+            sections.setdefault(containing, []).append(elem)
 
         for section_name, matches in sections.items():
             if matches:
