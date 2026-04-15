@@ -195,10 +195,15 @@ Examples:
   python main.py --capture-only --pages 5      # Capture only
   python main.py --from-screenshots ./screenshots/  # Skip capture
   python main.py --from-text chat.txt          # Skip capture + OCR
+  python main.py --send "Hello!" --group "My Group"  # Send a message
         """,
     )
 
     # Pipeline control
+    parser.add_argument(
+        "--send", type=str, default=None,
+        help="Send a message to the chat (requires --group for navigation)"
+    )
     parser.add_argument(
         "--capture-only", action="store_true",
         help="Only capture screenshots, skip OCR and summarization"
@@ -237,6 +242,8 @@ Examples:
 
     args = parser.parse_args()
 
+    if args.send and (args.capture_only or args.from_text or args.from_screenshots):
+        parser.error("--send cannot be combined with --capture-only, --from-text, or --from-screenshots.")
     if args.capture_only and (args.from_text or args.from_screenshots):
         parser.error("--capture-only cannot be combined with --from-text or --from-screenshots.")
     if args.from_text and args.from_screenshots:
@@ -256,6 +263,27 @@ Examples:
         if not screenshot_path.exists() or not screenshot_path.is_dir():
             parser.error(f"--from-screenshots directory does not exist: {args.from_screenshots}")
 
+    # --- Send message mode ---
+    if args.send:
+        require_navigation = bool(args.group and args.group != "群聊")
+        run_preflight_checks(
+            require_capture=True, require_navigation=require_navigation,
+            require_ocr=False, require_summarization=False,
+        )
+
+        from wechat.locator import Locator
+        from workflows import send_message
+
+        print("=" * 60)
+        print("  WeChat Send Message")
+        print("=" * 60)
+
+        locator = Locator()
+        group = args.group if args.group != "群聊" else None
+        send_message(locator, args.send, group_name=group, target_type=args.target_type)
+        return
+
+    # --- Summary pipeline ---
     require_capture = not args.from_text and not args.from_screenshots
     require_ocr = not args.from_text and not args.capture_only
     require_navigation = require_capture and bool(args.group and args.group != "群聊")

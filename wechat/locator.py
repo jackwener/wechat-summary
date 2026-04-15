@@ -47,6 +47,18 @@ class Locator:
         area = self.chat_area()
         return (area["x"] + area["width"] // 2, area["y"] + area["height"] // 2)
 
+    def input_box(self) -> tuple[int, int]:
+        """Return (x, y) center of the message input box."""
+        wx, wy = self.window["x"], self.window["y"]
+        ww, wh = self.window["width"], self.window["height"]
+        sidebar_right = self.layout["sidebar_right"] if self.layout else int(ww * 0.25)
+        inputbox_top = self.layout["inputbox_top"] if self.layout else (wh - 160)
+
+        # Input box: horizontally centered in chat column, vertically centered between inputbox_top and window bottom
+        x = wx + sidebar_right + (ww - sidebar_right) // 2
+        y = wy + inputbox_top + (wh - inputbox_top) // 2
+        return (x, y)
+
     def sidebar_region(self) -> dict:
         """Return sidebar region dict."""
         if self.layout:

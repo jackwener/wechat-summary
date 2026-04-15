@@ -114,6 +114,53 @@ def _search_and_click(
     time.sleep(1.0)
 
 
+def send_message(
+    locator: Locator,
+    message: str,
+    group_name: Optional[str] = None,
+    target_type: str = "group",
+) -> None:
+    """
+    Send a message in the current or specified chat.
+
+    Workflow:
+    1. (Optional) navigate_to_chat if group_name specified
+    2. Locate(input_box) → Act(click)
+    3. Act(type_text) — paste message
+    4. Act(press_enter) — send
+
+    Args:
+        locator: Locator instance.
+        message: Text message to send.
+        group_name: If provided, navigate to this chat first.
+        target_type: Chat type for navigation ("group", "contact", "any").
+    """
+    if not message.strip():
+        raise ValueError("Message cannot be empty.")
+
+    # Step 1: Navigate if needed
+    if group_name:
+        navigate_to_chat(locator, group_name, target_type=target_type)
+        time.sleep(0.5)
+        locator.refresh()
+
+    # Step 2: Locate input box → click
+    pos = locator.input_box()
+    print(f"  Clicking input box at {pos}")
+    actions.activate_wechat()
+    actions.click(*pos)
+    time.sleep(0.3)
+
+    # Step 3: Type message
+    print(f"  Typing message ({len(message)} chars)")
+    actions.type_text(message)
+    time.sleep(0.3)
+
+    # Step 4: Send (Enter)
+    actions.press_enter()
+    print(f"  ✅ Message sent")
+
+
 def capture_screenshots(
     locator: Locator,
     max_pages: int = 30,
