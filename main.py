@@ -224,8 +224,13 @@ Examples:
         help="Pages per chunk for chunked summarization (default: 500, set 0 to disable)",
     )
 
+    parser.add_argument(
+        "--target-type", default="group", choices=["group", "contact", "any"],
+        help="Type of chat to find: group (default), contact, or any",
+    )
+
     # Summarization options
-    parser.add_argument("--group", default="群聊", help="Group chat name for output file")
+    parser.add_argument("--group", default="群聊", help="Chat name for navigation and output file")
     parser.add_argument("--output-dir", default="output", help="Summary output directory")
     parser.add_argument("--model", default="claude-sonnet-4-20250514", help="Claude model")
     parser.add_argument("--save-text", default=None, help="Save OCR text to file")
@@ -289,6 +294,7 @@ Examples:
             output_dir=args.screenshots_dir,
             scroll_delay=args.delay,
             group_name=args.group if args.group != "群聊" else None,
+            target_type=args.target_type,
         )
 
         if not captured_screenshots:

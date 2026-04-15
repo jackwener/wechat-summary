@@ -392,16 +392,161 @@ def _verify_chat_title(group_name: str, window: Dict, layout: Optional[Dict]) ->
     return False
 
 
-def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = None) -> None:
+# Section header patterns for WeChat search results.
+# Each key is a canonical section name; values are lowercase patterns to match OCR text.
+_SECTION_HEADER_PATTERNS: Dict[str, list] = {
+    "internet_search": ["internet search", "搜索"],
+    "contacts": ["contacts", "联系人"],
+    "group_chats": ["group chats", "group chat", "群聊"],
+    "chat_history": ["chat history", "聊天记录"],
+    "official_accounts": ["official accounts", "公众号"],
+    "mini_programs": ["mini programs", "小程序"],
+}
+
+# Priority order when target_type is "any": prefer group chats, then contacts,
+# then chat history.  Other sections are ignored for navigation.
+_SECTION_PRIORITY = ["group_chats", "contacts", "chat_history"]
+
+
+def _parse_search_sections(
+    ocr_observations: list,
+    search_region: Dict,
+    img_height: int,
+    scale: float,
+    target_name: str,
+) -> Dict[str, list]:
     """
-    Navigate to a specific group chat with screenshot-based verification.
+    Parse OCR results from a search screenshot into section-aware buckets.
+
+    Identifies section headers (Group Chats, Contacts, Chat History, etc.)
+    and assigns each name-matching OCR result to the section it falls under.
+
+    Returns a dict mapping section name → list of (screen_y, text) tuples.
+    """
+
+    def _obs_screen_y(obs):
+        bbox = obs.boundingBox()
+        cy_px = (1.0 - bbox.origin.y - bbox.size.height / 2) * img_height
+        return search_region["y"] + int(cy_px / scale)
+
+    target_norm = _ocr_normalize(target_name)
+    target_compact_norm = target_norm.replace(" ", "")
+
+    # First pass: collect all OCR blocks with their y positions
+    all_blocks = []  # list of (screen_y, text_lower, text_original)
+    for obs in (ocr_observations or []):
+        top = obs.topCandidates_(1)
+        if not top:
+            continue
+        text = top[0].string()
+        sy = _obs_screen_y(obs)
+        all_blocks.append((sy, text.lower().strip(), text))
+
+    all_blocks.sort(key=lambda b: b[0])
+
+    # Second pass: identify section headers.
+    # To handle OCR splitting headers (e.g. "Group" + "Chats" as separate blocks),
+    # also try merging adjacent blocks within 8px vertical distance.
+    section_headers = []  # list of (screen_y, section_name)
+    used_indices = set()
+
+    for i, (sy, tl, _orig) in enumerate(all_blocks):
+        # Try single block match
+        matched_section = _match_section_header(tl)
+
+        # Try merging with next block if single didn't match
+        if matched_section is None and i + 1 < len(all_blocks):
+            next_sy, next_tl, _ = all_blocks[i + 1]
+            if abs(next_sy - sy) <= 8:
+                merged = f"{tl} {next_tl}"
+                matched_section = _match_section_header(merged)
+                if matched_section is not None:
+                    used_indices.add(i + 1)
+
+        if matched_section is not None:
+            section_headers.append((sy, matched_section))
+            used_indices.add(i)
+
+    section_headers.sort(key=lambda h: h[0])
+    print(f"  Detected section headers: {[(name, y) for y, name in section_headers]}")
+
+    # Third pass: classify name-matching blocks into sections
+    sections: Dict[str, list] = {name: [] for name in _SECTION_HEADER_PATTERNS}
+
+    for i, (sy, tl, text_orig) in enumerate(all_blocks):
+        if i in used_indices:
+            continue
+
+        text_norm = _ocr_normalize(text_orig)
+        text_compact_norm = text_norm.replace(" ", "")
+
+        # Check if this text matches the target name
+        if not (target_compact_norm == text_compact_norm or
+                target_compact_norm in text_compact_norm or
+                text_compact_norm in target_compact_norm):
+            continue
+
+        # Determine which section this block belongs to
+        containing_section = _find_containing_section(sy, section_headers)
+        sections[containing_section].append((sy, text_orig))
+
+    # Log what we found
+    for section_name, matches in sections.items():
+        if matches:
+            print(f"  Section '{section_name}': {[(t, y) for y, t in matches]}")
+
+    return sections
+
+
+def _match_section_header(text_lower: str) -> Optional[str]:
+    """Match a lowercase text string against known section header patterns."""
+    for section_name, patterns in _SECTION_HEADER_PATTERNS.items():
+        for pattern in patterns:
+            if pattern in text_lower:
+                return section_name
+    return None
+
+
+def _find_containing_section(y: int, section_headers: list) -> str:
+    """
+    Find which section a given y coordinate falls into.
+
+    Looks for the nearest section header above this y position.
+    Returns the section name, or "unknown" if above all headers.
+    """
+    containing = "unknown"
+    for header_y, section_name in section_headers:
+        if header_y <= y:
+            containing = section_name
+        else:
+            break
+    return containing
+
+
+def navigate_to_chat(
+    group_name: str,
+    window: Dict,
+    layout: Optional[Dict] = None,
+    target_type: str = "group",
+) -> None:
+    """
+    Navigate to a specific chat with screenshot-based verification.
+
+    Args:
+        group_name: Name of the group chat or contact to find.
+        window: WeChat window geometry dict.
+        layout: Optional detected layout dict.
+        target_type: Type of chat to find. One of:
+            - "group": search in Group Chats section (default)
+            - "contact": search in Contacts section
+            - "any": search in Group Chats first, then Contacts, then Chat History
 
     Strategy:
-    1. Screenshot sidebar and OCR to find the target group
-    2. If not visible, Cmd+F to search, paste group name
-    3. Verify search results contain the target group (screenshot + OCR)
-    4. Press Return to enter the chat
-    5. Verify title bar shows correct group name (screenshot + OCR)
+    1. Screenshot sidebar and OCR to find the target
+    2. If not visible, Cmd+F to search, paste name
+    3. Parse search results into sections (Group Chats, Contacts, Chat History)
+    4. Click the match in the correct section based on target_type
+    5. Verify title bar shows correct name
 
     Raises RuntimeError if navigation cannot be verified.
     """
@@ -426,7 +571,7 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
         return _ocr_find_text_y(path, sidebar_region, group_name)
 
     def _search_and_enter() -> None:
-        """Use Cmd+F search to find and enter the target group chat."""
+        """Use Cmd+F search to find and enter the target chat."""
         print(f"  Searching for '{group_name}' via Cmd+F...")
 
         # Cmd+F to activate search
@@ -450,7 +595,7 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
         ''')
         time.sleep(1.5)
 
-        # --- Verification Step 1: search results contain target group ---
+        # --- Verification Step 1: search results contain target ---
         if _verify_search_results(group_name, sidebar_region):
             print(f"  ✅ Search verification passed: found '{group_name}' in search results")
         else:
@@ -478,12 +623,10 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
             else:
                 raise RuntimeError(
                     f"Navigation failed: could not find '{group_name}' in search results. "
-                    "Please ensure the group chat name is correct and you are a member."
+                    "Please ensure the chat name is correct and you are a member."
                 )
 
-        # Click on the group chat in search results.
-        # WeChat search shows: search suggestions at top, then "Group Chats" section.
-        # We must click the entry under "Group Chats", not the search suggestion.
+        # Screenshot and OCR the search results panel
         search_region = {
             "x": sidebar_region["x"],
             "y": sidebar_region["y"],
@@ -493,7 +636,6 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
         search_screenshot = "/tmp/_search_click.png"
         take_screenshot(search_region, search_screenshot)
 
-        # OCR with positions to find "Group Chats" header and group name entries
         import Vision as _Vision
         from Foundation import NSURL as _NSURL
 
@@ -509,51 +651,19 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
         _img_h = _img.height
         _scale = _img_h / search_region["height"] if search_region["height"] > 0 else 1
 
-        def _obs_screen_y(obs):
-            bbox = obs.boundingBox()
-            cy_px = (1.0 - bbox.origin.y - bbox.size.height / 2) * _img_h
-            return search_region["y"] + int(cy_px / _scale)
+        # Parse search results into section-aware buckets
+        sections = _parse_search_sections(
+            _req.results(), search_region, _img_h, _scale, group_name
+        )
 
-        # Find section header y and all matching group name positions
-        group_chats_y = None
-        name_matches = []  # list of (screen_y, text)
+        # Select candidates from the correct section based on target_type
+        candidates = _select_candidates_by_type(sections, target_type)
 
-        target_norm = _ocr_normalize(group_name)
-        target_compact_norm = target_norm.replace(" ", "")
-
-        for obs in (_req.results() or []):
-            top = obs.topCandidates_(1)
-            if not top:
-                continue
-            text = top[0].string()
-            text_norm = _ocr_normalize(text)
-            text_compact_norm = text_norm.replace(" ", "")
-            sy = _obs_screen_y(obs)
-
-            # Detect "Group Chats" / "群聊" section header
-            tl = text.lower().strip()
-            if tl in ("group chats", "群聊") or "group chat" in tl:
-                group_chats_y = sy
-                continue
-
-            # Check if this text matches our group name
-            if (target_compact_norm == text_compact_norm or
-                    target_compact_norm in text_compact_norm or
-                    text_compact_norm in target_compact_norm):
-                name_matches.append((sy, text))
-
-        # Prefer match below "Group Chats" header
         result_y = None
-        if group_chats_y is not None and name_matches:
-            below = [(y, t) for y, t in name_matches if y > group_chats_y]
-            if below:
-                result_y = below[0][0]
-                print(f"  Found '{below[0][1]}' under Group Chats section at y={result_y}")
-
-        # Fallback: use the last match (furthest down, most likely actual result)
-        if result_y is None and name_matches:
-            result_y = name_matches[-1][0]
-            print(f"  Using last match '{name_matches[-1][1]}' at y={result_y}")
+        if candidates:
+            # Use the first (topmost) match in the preferred section
+            result_y = candidates[0][0]
+            print(f"  Selected '{candidates[0][1]}' from {target_type} search at y={result_y}")
 
         if result_y is not None:
             result_x = search_region["x"] + search_region["width"] // 2
@@ -562,18 +672,14 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
             time.sleep(0.2)
             subprocess.run(["cliclick", f"c:{result_x},{result_y}"], check=True, timeout=5)
         else:
-            # Fallback: press Return
-            print(f"  ⚠️  Could not locate search result position, pressing Return as fallback")
-            run_applescript('''
-            tell application "System Events"
-                tell process "WeChat"
-                    key code 36
-                end tell
-            end tell
-            ''')
+            raise RuntimeError(
+                f"Navigation failed: no match for '{group_name}' found in "
+                f"{_describe_target_type(target_type)} section(s). "
+                f"Detected sections: {[s for s, m in sections.items() if m]}"
+            )
         time.sleep(1.0)
 
-    # --- Strategy 1: check if the group is already visible in sidebar ---
+    # --- Strategy 1: check if the target is already visible in sidebar ---
     target_y = _find_group_in_sidebar()
 
     if target_y is not None:
@@ -593,12 +699,12 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
         print(f"  ⚠️  Sidebar click landed on wrong chat, falling back to search...")
 
     else:
-        print(f"  Group '{group_name}' not visible in sidebar, searching...")
+        print(f"  '{group_name}' not visible in sidebar, searching...")
 
     # --- Strategy 2: search via Cmd+F ---
     _search_and_enter()
 
-    # --- Verification Step 2: title bar shows correct group name ---
+    # --- Verification Step 2: title bar shows correct name ---
     if _verify_chat_title(group_name, window, layout):
         print(f"  ✅ Chat verification passed: title bar matches '{group_name}'")
     else:
@@ -608,6 +714,50 @@ def navigate_to_chat(group_name: str, window: Dict, layout: Optional[Dict] = Non
         )
 
     print(f"Navigated to: {group_name}")
+
+
+def _select_candidates_by_type(
+    sections: Dict[str, list],
+    target_type: str,
+) -> list:
+    """
+    Select candidate matches from parsed sections based on target_type.
+
+    Args:
+        sections: Dict of section_name → [(screen_y, text), ...]
+        target_type: "group", "contact", or "any"
+
+    Returns:
+        List of (screen_y, text) candidates from the appropriate section(s).
+    """
+    if target_type == "group":
+        preferred = ["group_chats"]
+    elif target_type == "contact":
+        preferred = ["contacts"]
+    else:
+        preferred = _SECTION_PRIORITY
+
+    for section_name in preferred:
+        candidates = sections.get(section_name, [])
+        if candidates:
+            return candidates
+
+    # Last resort: try any section that has matches (except internet_search)
+    for section_name, matches in sections.items():
+        if matches and section_name != "internet_search":
+            print(f"  ⚠️  No match in preferred sections, falling back to '{section_name}'")
+            return matches
+
+    return []
+
+
+def _describe_target_type(target_type: str) -> str:
+    """Human-readable description of target_type for error messages."""
+    if target_type == "group":
+        return "Group Chats"
+    elif target_type == "contact":
+        return "Contacts"
+    return "Group Chats / Contacts / Chat History"
 
 
 def _ocr_find_text_y(image_path: str, region: Dict, target: str) -> Optional[int]:
@@ -733,6 +883,7 @@ def capture_chat(
     output_dir: str = "screenshots",
     scroll_delay: float = 0.8,
     group_name: Optional[str] = None,
+    target_type: str = "group",
 ) -> list[str]:
     """
     Capture WeChat chat screenshots by scrolling up page by page.
@@ -741,7 +892,8 @@ def capture_chat(
         max_pages: Maximum number of pages to capture
         output_dir: Directory to save screenshots
         scroll_delay: Seconds to wait after each scroll for rendering
-        group_name: If provided, navigate to this group chat first
+        group_name: If provided, navigate to this chat first
+        target_type: Type of chat to find: "group", "contact", or "any"
 
     Returns:
         List of screenshot file paths in chronological order (oldest first)
@@ -757,7 +909,7 @@ def capture_chat(
 
     # Navigate to target chat if specified
     if group_name:
-        navigate_to_chat(group_name, window, layout)
+        navigate_to_chat(group_name, window, layout, target_type=target_type)
         # Re-detect layout after navigation — when no chat was previously
         # selected, the initial detect_layout may have used incorrect
         # fallback values (the right side is blank, so sidebar divider
@@ -818,7 +970,11 @@ if __name__ == "__main__":
     parser.add_argument("--pages", type=int, default=30, help="Max pages to capture")
     parser.add_argument("--output", default="screenshots", help="Output directory")
     parser.add_argument("--delay", type=float, default=0.8, help="Scroll delay (seconds)")
-    parser.add_argument("--group", default=None, help="Group chat name to navigate to")
+    parser.add_argument("--group", default=None, help="Chat name to navigate to")
+    parser.add_argument(
+        "--target-type", default="group", choices=["group", "contact", "any"],
+        help="Type of chat to find: group (default), contact, or any",
+    )
     args = parser.parse_args()
 
     files = capture_chat(
@@ -826,6 +982,7 @@ if __name__ == "__main__":
         output_dir=args.output,
         scroll_delay=args.delay,
         group_name=args.group,
+        target_type=args.target_type,
     )
     print("\nScreenshots saved:")
     for f in files:
