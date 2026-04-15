@@ -110,6 +110,17 @@ def select_all_and_delete() -> None:
     ''')
 
 
+def press_enter() -> None:
+    """Send Enter/Return key to WeChat."""
+    run_applescript('''
+    tell application "System Events"
+        tell process "WeChat"
+            key code 36
+        end tell
+    end tell
+    ''')
+
+
 def page_up() -> None:
     """Send Page Up key to WeChat."""
     run_applescript('''
