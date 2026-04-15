@@ -18,7 +18,7 @@ from typing import Optional
 # Re-export low-level functions for backward compatibility
 from wechat.actions import get_window_info as get_wechat_window_info
 from wechat.actions import screenshot as take_screenshot
-from wechat.layout import detect_layout, get_chat_area
+from wechat.layout import detect_layout, get_chat_area  # noqa: F401 — re-exported
 from wechat.locator import Locator
 from workflows import capture_screenshots, navigate_to_chat as _wf_navigate
 
@@ -34,9 +34,7 @@ def navigate_to_chat(
 
     See workflows.navigate_to_chat for the Locate→Act implementation.
     """
-    locator = Locator.__new__(Locator)
-    locator.window = window
-    locator.layout = layout or detect_layout(window)
+    locator = Locator(window=window, layout=layout)
     _wf_navigate(locator, group_name, target_type=target_type)
 
 

@@ -13,9 +13,7 @@ from PIL import Image
 from wechat import actions
 from wechat.layout import detect_layout, get_chat_area
 from wechat.ocr import (
-    ocr_all_text,
     ocr_find_text_y,
-    ocr_normalize,
     parse_search_sections,
     select_candidates_by_type,
     verify_text_in_region,
@@ -25,9 +23,9 @@ from wechat.ocr import (
 class Locator:
     """Finds UI element positions in the WeChat window."""
 
-    def __init__(self, window: Optional[dict] = None):
+    def __init__(self, window: Optional[dict] = None, layout: Optional[dict] = None):
         self.window = window or actions.get_window_info()
-        self.layout = detect_layout(self.window)
+        self.layout = layout or detect_layout(self.window)
 
     def refresh(self) -> None:
         """Re-acquire window info and re-detect layout."""
