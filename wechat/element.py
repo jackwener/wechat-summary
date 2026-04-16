@@ -5,8 +5,11 @@ Element: a located UI element with text, position, and region info.
 Snapshot: a cached screenshot + OCR result for a screen region.
 """
 
+import os
+import tempfile
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 
@@ -40,6 +43,9 @@ class Snapshot:
 
     Take one screenshot, run OCR once, then query multiple times
     without re-capturing. Automatically expires after _SNAPSHOT_TTL seconds.
+
+    Owns the on-disk PNG: unless caller passes ``image_path`` explicitly,
+    Snapshot creates a uniquely-named tempfile and removes it via ``cleanup()``.
     """
 
     def __init__(self, region: dict, region_name: str = "", image_path: Optional[str] = None):
@@ -49,12 +55,41 @@ class Snapshot:
 
         # Take screenshot (lazy import to avoid circular dependency)
         from wechat import actions as _actions
-        self._image_path = image_path or f"/tmp/_snapshot_{region_name or 'unknown'}.png"
+
+        if image_path is None:
+            # Unique tempfile: avoids collisions on the same region_name and
+            # makes per-snapshot cleanup deterministic.
+            fd, self._image_path = tempfile.mkstemp(
+                suffix=".png",
+                prefix=f"_snapshot_{region_name or 'unknown'}_",
+            )
+            os.close(fd)
+            self._owns_file = True
+        else:
+            self._image_path = image_path
+            self._owns_file = False
+
         _actions.screenshot(region, self._image_path)
 
         # Run OCR once
         self._ocr_observations = self._run_ocr()
         self._img_height, self._scale = self._compute_scale()
+
+    def cleanup(self) -> None:
+        """Delete the snapshot image file if we own it."""
+        if getattr(self, "_owns_file", False) and self._image_path:
+            try:
+                Path(self._image_path).unlink(missing_ok=True)
+            except Exception:  # noqa: BLE001
+                pass
+            self._owns_file = False
+
+    def __del__(self):
+        # Best-effort cleanup when Snapshot is garbage-collected.
+        try:
+            self.cleanup()
+        except Exception:  # noqa: BLE001
+            pass
 
     @property
     def is_stale(self) -> bool:
@@ -62,16 +97,8 @@ class Snapshot:
 
     def _run_ocr(self) -> list:
         """Run Vision OCR and return raw observations."""
-        import Vision
-        from Foundation import NSURL
-
-        img_url = NSURL.fileURLWithPath_(self._image_path)
-        req = Vision.VNRecognizeTextRequest.alloc().init()
-        req.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
-        req.setRecognitionLanguages_(["zh-Hans", "en"])
-        handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(img_url, {})
-        handler.performRequests_error_([req], None)
-        return list(req.results() or [])
+        from wechat.vision import run_text_recognition
+        return run_text_recognition(self._image_path, languages=["zh-Hans", "en-US"])
 
     def _compute_scale(self) -> tuple[int, float]:
         """Compute image height and scale factor."""
@@ -127,10 +154,11 @@ class Snapshot:
 
         # Handle truncated WeChat titles: "...流群（499）" for long group names.
         # Check if any trailing suffix of the target appears in the OCR text.
-        if len(target_lower) >= 4:
-            for suffix_len in range(min(len(target_lower), 10), 2, -1):
-                suffix = target_lower[-suffix_len:].replace(" ", "")
-                if len(suffix) >= 3 and suffix in all_text_compact:
+        # Use the normalized variants so OCR confusions (I/l/1, O/0) match.
+        if len(target_norm) >= 4:
+            for suffix_len in range(min(len(target_norm), 10), 2, -1):
+                suffix = target_norm[-suffix_len:].replace(" ", "")
+                if len(suffix) >= 3 and suffix in all_text_compact_norm:
                     return True
 
         return False

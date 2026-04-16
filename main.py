@@ -307,20 +307,29 @@ Examples:
         print(f"\n📸 Using existing screenshots from {args.from_screenshots}")
         screenshots_dir = args.from_screenshots
     else:
-        from capture import capture_chat
+        import time as _time
+        from wechat.locator import Locator
+        from workflows import capture_screenshots, navigate_to_chat
 
         print(f"\n📸 Step 1: Capturing screenshots (max {args.pages} pages)")
-        if args.group and args.group != "群聊":
-            print(f"   🔍 Auto-navigating to: {args.group}")
+        group_name = args.group if args.group != "群聊" else None
+        if group_name:
+            print(f"   🔍 Auto-navigating to: {group_name}")
         else:
             print(f"   ⚠️  Make sure WeChat is open with the target group chat visible!")
 
-        captured_screenshots = capture_chat(
+        locator = Locator()
+        if group_name:
+            navigate_to_chat(locator, group_name, target_type=args.target_type)
+            # Re-detect layout after navigation; search panel may have shifted bounds.
+            _time.sleep(0.5)
+            locator.refresh()
+
+        captured_screenshots = capture_screenshots(
+            locator,
             max_pages=args.pages,
             output_dir=args.screenshots_dir,
             scroll_delay=args.delay,
-            group_name=args.group if args.group != "群聊" else None,
-            target_type=args.target_type,
         )
 
         if not captured_screenshots:

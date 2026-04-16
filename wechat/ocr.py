@@ -8,10 +8,6 @@ Note: OCR execution and text search are now in Snapshot (element.py).
 This module retains shared helpers used by both Snapshot and Locator.
 """
 
-import os
-import tempfile
-from difflib import SequenceMatcher
-from pathlib import Path
 from typing import Optional
 
 
