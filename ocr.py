@@ -3,9 +3,12 @@ ocr.py — OCR using macOS Vision framework
 
 Uses VNRecognizeTextRequest to extract text from WeChat chat screenshots.
 Supports Chinese (zh-Hans) and English, with deduplication across pages.
+
+The low-level Vision call is shared with wechat/element.py::Snapshot via
+wechat/vision.py so both pipelines use identical request configuration
+and error handling.
 """
 
-import os
 import re
 from pathlib import Path
 from typing import Optional, List
@@ -57,21 +60,10 @@ def collect_screenshot_files(screenshot_dir: Path, file_paths: Optional[List[str
 
 
 
-def _import_vision_stack():
-    """Import macOS OCR frameworks lazily with a clear error message."""
-    try:
-        import Quartz
-        import Vision
-        from Foundation import NSURL
-    except ImportError as exc:
-        raise RuntimeError(
-            "OCR requires macOS Vision frameworks. "
-            "Install dependencies from requirements.txt in a macOS environment."
-        ) from exc
-    return Quartz, Vision, NSURL
-
-
-def recognize_text_in_image(image_path: str, languages: list[str] = None) -> list[dict]:
+def recognize_text_in_image(
+    image_path: str,
+    languages: Optional[List[str]] = None,
+) -> list[dict]:
     """
     Recognize text in a single image using macOS Vision framework.
 
@@ -81,61 +73,18 @@ def recognize_text_in_image(image_path: str, languages: list[str] = None) -> lis
 
     Returns:
         List of dicts with keys: text, confidence, y_position (0=bottom, 1=top)
+        Sorted top-to-bottom (high y first in Vision coords).
     """
-    if languages is None:
-        languages = ["zh-Hans", "en-US"]
+    from wechat.vision import run_text_recognition, observations_to_dicts
 
-    Quartz, Vision, NSURL = _import_vision_stack()
-
-    # Load image
-    image_url = NSURL.fileURLWithPath_(os.path.abspath(image_path))
-    image_source = Quartz.CGImageSourceCreateWithURL(image_url, None)
-    if image_source is None:
+    if not Path(image_path).exists():
         raise FileNotFoundError(f"Cannot load image: {image_path}")
 
-    cg_image = Quartz.CGImageSourceCreateImageAtIndex(image_source, 0, None)
-    if cg_image is None:
-        raise ValueError(f"Cannot create CGImage from: {image_path}")
-
-    # Create and configure text recognition request
-    results = []
-
-    def completion_handler(request, error):
-        if error:
-            print(f"OCR error: {error}")
-            return
-        observations = request.results()
-        if observations is None:
-            return
-        for obs in observations:
-            candidates = obs.topCandidates_(1)
-            if candidates and len(candidates) > 0:
-                text = candidates[0].string()
-                confidence = candidates[0].confidence()
-                # Get bounding box (y: 0=bottom, 1=top in Vision coordinates)
-                bbox = obs.boundingBox()
-                y_pos = bbox.origin.y + bbox.size.height / 2
-                results.append({
-                    "text": text,
-                    "confidence": confidence,
-                    "y_position": y_pos,  # Vision coords: 0=bottom, 1=top
-                })
-
-    request = Vision.VNRecognizeTextRequest.alloc().initWithCompletionHandler_(
-        completion_handler
+    observations = run_text_recognition(
+        image_path,
+        languages=languages or ["zh-Hans", "en-US"],
     )
-    request.setRecognitionLanguages_(languages)
-    request.setRecognitionLevel_(Vision.VNRequestTextRecognitionLevelAccurate)
-    request.setUsesLanguageCorrection_(True)
-
-    # Perform recognition
-    handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(
-        cg_image, None
-    )
-    success = handler.performRequests_error_([request], None)
-    if not success[0]:
-        print(f"OCR request failed for {image_path}")
-
+    results = observations_to_dicts(observations)
     # Sort top-to-bottom (high y = top of image in Vision coords)
     results.sort(key=lambda r: r["y_position"], reverse=True)
     return results
@@ -268,7 +217,7 @@ def deduplicate_pages(
 
 def ocr_screenshots(
     screenshot_dir: str = "screenshots",
-    languages: list[str] = None,
+    languages: Optional[List[str]] = None,
     file_paths: Optional[List[str]] = None,
 ) -> str:
     """

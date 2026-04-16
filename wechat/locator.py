@@ -9,9 +9,6 @@ Uses Snapshot internally to cache screenshots + OCR results,
 avoiding redundant captures within the same operation.
 """
 
-import os
-import tempfile
-from pathlib import Path
 from typing import Optional
 
 from wechat import actions
@@ -32,7 +29,7 @@ class Locator:
         """Re-acquire window info and re-detect layout. Clears cached snapshots."""
         self.window = actions.get_window_info()
         self.layout = detect_layout(self.window)
-        self._snapshots.clear()
+        self.invalidate()  # drops Snapshots and deletes their tempfiles
 
     def snapshot(self, region_name: str) -> Snapshot:
         """
@@ -43,16 +40,28 @@ class Locator:
         if cached and not cached.is_stale:
             return cached
 
+        # Releasing a stale snapshot: delete its tempfile eagerly instead of
+        # waiting for __del__.  This keeps /tmp clean during long sessions.
+        if cached is not None:
+            cached.cleanup()
+
         region = self._region_for_name(region_name)
         snap = Snapshot(region, region_name=region_name)
         self._snapshots[region_name] = snap
         return snap
 
     def invalidate(self, region_name: Optional[str] = None) -> None:
-        """Clear cached snapshot(s). If region_name is None, clear all."""
+        """Clear cached snapshot(s) and delete their tempfiles.
+
+        If region_name is None, clear all cached snapshots.
+        """
         if region_name:
-            self._snapshots.pop(region_name, None)
+            snap = self._snapshots.pop(region_name, None)
+            if snap is not None:
+                snap.cleanup()
         else:
+            for snap in self._snapshots.values():
+                snap.cleanup()
             self._snapshots.clear()
 
     def _region_for_name(self, name: str) -> dict:
