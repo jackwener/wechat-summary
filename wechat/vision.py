@@ -18,7 +18,6 @@ from typing import Optional
 def _import_vision_stack():
     """Import Vision frameworks with a clear error if missing."""
     try:
-        import Quartz  # noqa: F401 — used by callers via helpers
         import Vision
         from Foundation import NSURL
     except ImportError as exc:
@@ -26,7 +25,7 @@ def _import_vision_stack():
             "OCR requires macOS Vision frameworks. "
             "Install dependencies from requirements.txt in a macOS environment."
         ) from exc
-    return Quartz, Vision, NSURL
+    return Vision, NSURL
 
 
 def run_text_recognition(
@@ -47,7 +46,7 @@ def run_text_recognition(
     if languages is None:
         languages = ["zh-Hans", "en-US"]
 
-    _Quartz, Vision, NSURL = _import_vision_stack()
+    Vision, NSURL = _import_vision_stack()
 
     abspath = os.path.abspath(image_path)
     img_url = NSURL.fileURLWithPath_(abspath)
