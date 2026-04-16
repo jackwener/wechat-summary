@@ -48,32 +48,99 @@ class Snapshot:
     Snapshot creates a uniquely-named tempfile and removes it via ``cleanup()``.
     """
 
-    def __init__(self, region: dict, region_name: str = "", image_path: Optional[str] = None):
+    def __init__(
+        self,
+        region: dict,
+        region_name: str = "",
+        image_path: Optional[str] = None,
+        window_id: Optional[int] = None,
+        window: Optional[dict] = None,
+        window_image: Optional[str] = None,
+    ):
         self.region = region
         self.region_name = region_name
         self.timestamp = time.time()
 
-        # Take screenshot (lazy import to avoid circular dependency)
+        # Lazy import to avoid circular dependency
         from wechat import actions as _actions
 
-        if image_path is None:
-            # Unique tempfile: avoids collisions on the same region_name and
-            # makes per-snapshot cleanup deterministic.
-            fd, self._image_path = tempfile.mkstemp(
-                suffix=".png",
-                prefix=f"_snapshot_{region_name or 'unknown'}_",
-            )
-            os.close(fd)
-            self._owns_file = True
-        else:
-            self._image_path = image_path
-            self._owns_file = False
+        # Always own a uniquely-named tempfile for the final image.
+        fd, self._image_path = tempfile.mkstemp(
+            suffix=".png",
+            prefix=f"_snapshot_{region_name or 'unknown'}_",
+        )
+        os.close(fd)
+        self._owns_file = True
 
-        _actions.screenshot(region, self._image_path)
+        if image_path is not None:
+            # Caller-supplied pre-made image — copy so we own the path.
+            import shutil
+            shutil.copy2(image_path, self._image_path)
+        elif window_image is not None and window is not None:
+            # Locator-cached full-window screenshot: PIL-crop to region.
+            self._crop_from_window_image(window_image, window)
+        elif window_id is not None and window is not None:
+            # Window-based capture: screencapture -l <id> then PIL-crop to region.
+            self._capture_via_window(window_id, window, _actions)
+        else:
+            # Fallback: direct region screencapture.
+            _actions.screenshot(region, self._image_path)
 
         # Run OCR once
         self._ocr_observations = self._run_ocr()
         self._img_height, self._scale = self._compute_scale()
+
+    def _crop_from_window_image(self, win_path: str, window: dict) -> None:
+        """PIL-crop an already-captured full-window image to self.region."""
+        from PIL import Image as _Image
+
+        img = _Image.open(win_path)
+        iw, ih = img.size
+        scale_x = iw / window["width"] if window["width"] > 0 else 2.0
+        scale_y = ih / window["height"] if window["height"] > 0 else 2.0
+
+        x_px = int((self.region["x"] - window["x"]) * scale_x)
+        y_px = int((self.region["y"] - window["y"]) * scale_y)
+        w_px = int(self.region["width"] * scale_x)
+        h_px = int(self.region["height"] * scale_y)
+
+        x_px = max(0, min(x_px, iw - 1))
+        y_px = max(0, min(y_px, ih - 1))
+        w_px = max(1, min(w_px, iw - x_px))
+        h_px = max(1, min(h_px, ih - y_px))
+
+        img.crop((x_px, y_px, x_px + w_px, y_px + h_px)).save(self._image_path)
+
+    def _capture_via_window(self, window_id: int, window: dict, _actions) -> None:
+        """Take a full-window screenshot via CGWindowID and PIL-crop to self.region."""
+        from PIL import Image as _Image
+
+        fd, win_path = tempfile.mkstemp(suffix=".png", prefix="_win_full_")
+        os.close(fd)
+        try:
+            _actions.screenshot_window(window_id, win_path)
+            img = _Image.open(win_path)
+            iw, ih = img.size
+            # Scale: window image pixels per logical point (typically 2.0 on Retina)
+            scale_x = iw / window["width"] if window["width"] > 0 else 2.0
+            scale_y = ih / window["height"] if window["height"] > 0 else 2.0
+
+            # Convert screen-coord region → pixel rect within the window image.
+            x_px = int((self.region["x"] - window["x"]) * scale_x)
+            y_px = int((self.region["y"] - window["y"]) * scale_y)
+            w_px = int(self.region["width"] * scale_x)
+            h_px = int(self.region["height"] * scale_y)
+
+            # Clamp to image bounds.
+            x_px = max(0, min(x_px, iw - 1))
+            y_px = max(0, min(y_px, ih - 1))
+            w_px = max(1, min(w_px, iw - x_px))
+            h_px = max(1, min(h_px, ih - y_px))
+
+            cropped = img.crop((x_px, y_px, x_px + w_px, y_px + h_px))
+            cropped.save(self._image_path)
+        finally:
+            Path(win_path).unlink(missing_ok=True)
 
     def cleanup(self) -> None:
         """Delete the snapshot image file if we own it."""

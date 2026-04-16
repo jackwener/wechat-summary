@@ -64,6 +64,40 @@ def click(x: int, y: int) -> None:
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, up)
 
 
+def get_window_id() -> int:
+    """Return the CGWindowID of the WeChat main window (largest on-screen WeChat window)."""
+    import Quartz
+
+    windows = Quartz.CGWindowListCopyWindowInfo(
+        Quartz.kCGWindowListOptionOnScreenOnly
+        | Quartz.kCGWindowListExcludeDesktopElements,
+        Quartz.kCGNullWindowID,
+    )
+    best_id, best_area = None, 0
+    for w in windows:
+        if w.get("kCGWindowOwnerName") != "WeChat":
+            continue
+        if w.get("kCGWindowLayer", 999) != 0:
+            continue
+        bounds = w.get("kCGWindowBounds", {})
+        area = bounds.get("Width", 0) * bounds.get("Height", 0)
+        if area > best_area:
+            best_area = area
+            best_id = int(w["kCGWindowNumber"])
+    if best_id is None:
+        raise RuntimeError("WeChat window not found on screen")
+    return best_id
+
+
+def screenshot_window(window_id: int, filepath: str) -> str:
+    """Capture the WeChat window by CGWindowID. Image is window-relative, no shadow."""
+    subprocess.run(
+        ["screencapture", "-l", str(window_id), "-o", "-x", filepath],
+        check=True, timeout=10,
+    )
+    return filepath
+
+
 def screenshot(region: dict, filepath: str) -> str:
     """Take a screenshot of a specific screen region. Returns filepath."""
     x, y, w, h = region["x"], region["y"], region["width"], region["height"]

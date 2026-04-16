@@ -73,12 +73,13 @@ def select_candidates_by_type(sections: dict[str, list], target_type: str) -> li
         if candidates:
             return candidates
 
-    # When the preferred section header wasn't OCR'd, items before the first
-    # detected header land in "unknown".  WeChat shows Group Chats at the very
-    # top of search results, so "unknown" items are the most likely group match.
+    # When the preferred section header wasn't OCR'd (WeChat omits headers for
+    # single-match results), items land in "unknown". Use them as fallback for
+    # any target type — the top result is almost always the right one.
     unknown = sections.get("unknown", [])
-    if unknown and target_type in ("group", "any"):
-        print(f"  ℹ️  Group Chats header not detected; using {len(unknown)} 'unknown' candidate(s) (likely top-of-results group entries)")
+    if unknown:
+        label = {"group": "Group Chats", "contact": "Contacts"}.get(target_type, "section")
+        print(f"  ℹ️  {label} header not detected; using {len(unknown)} 'unknown' candidate(s) (likely top-of-results)")
         return unknown
 
     # Last resort: any non-internet, non-unknown section

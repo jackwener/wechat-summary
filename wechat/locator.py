@@ -24,12 +24,47 @@ class Locator:
         self.window = window or actions.get_window_info()
         self.layout = layout or detect_layout(self.window)
         self._snapshots: dict[str, Snapshot] = {}
+        self._window_id: Optional[int] = self._fetch_window_id()
+        # Cached full-window screenshot: taken once and shared across Snapshots
+        # created in the same operation, avoiding repeated screencapture calls.
+        self._win_img_path: Optional[str] = None
+        self._win_img_time: float = 0.0
+
+    def _fetch_window_id(self) -> Optional[int]:
+        """Get WeChat CGWindowID for window-based capture. Returns None on failure."""
+        try:
+            return actions.get_window_id()
+        except Exception as exc:
+            print(f"  ⚠️  Could not get WeChat window ID, falling back to -R capture: {exc}")
+            return None
+
+    def _get_window_image(self) -> Optional[str]:
+        """Return path to a fresh full-window screenshot, shared across regions."""
+        import time as _time
+        if self._window_id is None:
+            return None
+        # Re-capture if stale (>1s old) or not yet taken.
+        if self._win_img_path is None or (_time.time() - self._win_img_time) > 1.0:
+            import os, tempfile
+            if self._win_img_path:
+                try:
+                    os.unlink(self._win_img_path)
+                except Exception:
+                    pass
+            fd, path = tempfile.mkstemp(suffix=".png", prefix="_win_full_")
+            os.close(fd)
+            actions.screenshot_window(self._window_id, path)
+            self._win_img_path = path
+            self._win_img_time = _time.time()
+        return self._win_img_path
 
     def refresh(self) -> None:
         """Re-acquire window info and re-detect layout. Clears cached snapshots."""
         self.window = actions.get_window_info()
         self.layout = detect_layout(self.window)
         self.invalidate()  # drops Snapshots and deletes their tempfiles
+        self._window_id = self._fetch_window_id()
+        self._win_img_path = None  # invalidate cached window image
 
     def snapshot(self, region_name: str) -> Snapshot:
         """
@@ -46,7 +81,14 @@ class Locator:
             cached.cleanup()
 
         region = self._region_for_name(region_name)
-        snap = Snapshot(region, region_name=region_name)
+        win_img = self._get_window_image()
+        snap = Snapshot(
+            region,
+            region_name=region_name,
+            window_id=self._window_id if win_img is None else None,
+            window=self.window if win_img is None and self._window_id is not None else None,
+            window_image=win_img,
+        )
         self._snapshots[region_name] = snap
         return snap
 
@@ -69,12 +111,18 @@ class Locator:
         if name == "sidebar":
             return self.sidebar_region()
         elif name == "search_panel":
-            region = self.sidebar_region()
+            # The search overlay starts just below the macOS title bar (~28pt),
+            # not at titlebar_bottom (which is the chat header, ~100pt).
+            # Capturing from sidebar["y"] would miss the top search results.
+            wx, wy = self.window["x"], self.window["y"]
+            wh = self.window["height"]
+            sidebar = self.sidebar_region()
+            top = wy + 28  # just below macOS traffic-light bar
             return {
-                "x": region["x"],
-                "y": region["y"],
-                "width": region["width"] + 100,
-                "height": region["height"],
+                "x": sidebar["x"],
+                "y": top,
+                "width": sidebar["width"] + 100,
+                "height": wh - 28,
             }
         elif name == "title":
             return self.title_region()
@@ -169,7 +217,9 @@ class Locator:
         # Use detected titlebar_bottom so the group name text is fully covered.
         # Fixed height of 50pt can cut off the name if macOS title bar + WeChat
         # header together are taller than 50pt.
-        title_height = (self.layout["titlebar_bottom"] + 10) if self.layout else 80
+        # Clamp to at least 60pt: layout sometimes detects only the macOS traffic-light
+        # bar (~18pt), which cuts off the chat name text that sits below it.
+        title_height = max((self.layout["titlebar_bottom"] + 10), 60) if self.layout else 80
         return {
             "x": wx + sidebar_right,
             "y": wy,
