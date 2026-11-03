@@ -41,7 +41,7 @@ def _load_local_env() -> None:
     except Exception:  # noqa: BLE001
         return
 
-    load_dotenv(dotenv_path=env_file, override=False)
+    load_dotenv(dotenv_path=env_file, override=True)
 
 
 def chunk_sequence(items: list, chunk_size: int) -> list[list]:
@@ -185,6 +185,7 @@ def run_preflight_checks(
 
 
 def main():
+    _load_local_env()  # so SUMMARY_MODEL from .env.local can set the --model default
     parser = argparse.ArgumentParser(
         description="WeChat Group Chat Summary Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -235,7 +236,11 @@ Examples:
     # Summarization options
     parser.add_argument("--group", default="群聊", help="Chat name for navigation and output file")
     parser.add_argument("--output-dir", default="output", help="Summary output directory")
-    parser.add_argument("--model", default="claude-sonnet-4-20250514", help="Claude model")
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("SUMMARY_MODEL") or "claude-sonnet-4-20250514",
+        help="Model name (default: $SUMMARY_MODEL from .env.local, else claude-sonnet-4-20250514)",
+    )
     parser.add_argument("--save-text", default=None, help="Save OCR text to file")
     parser.add_argument("--no-pdf", action="store_true", help="Skip PDF generation")
 
@@ -385,6 +390,11 @@ Examples:
         if args.save_text:
             Path(args.save_text).write_text(chat_text, encoding="utf-8")
             print(f"   OCR text saved to {args.save_text}")
+
+        # Always keep the raw OCR text before it goes to the LLM.
+        from summarize import save_raw_history
+        raw_path = save_raw_history(chat_text, output_dir=args.output_dir, group_name=args.group)
+        print(f"   Raw chat history: {raw_path}")
 
     # Step 3: Summarize
     from summarize import save_summary, summarize_chat, summarize_chat_in_chunks
