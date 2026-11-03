@@ -8,7 +8,45 @@ Note: OCR execution and text search are now in Snapshot (element.py).
 This module retains shared helpers used by both Snapshot and Locator.
 """
 
+import re
+import unicodedata
 from typing import Optional
+
+
+# Emoji / keycap / joiner marks that WeChat search and OCR drop or split on.
+_STRIP_CHARS = {"\ufe0f", "\u200d", "\u20e3"}
+
+
+def clean_chat_name(name: str) -> str:
+    """Remove emoji (e.g. "6️⃣"), invisible marks and edge whitespace from a chat name.
+
+    Vision OCR cannot read emoji and WeChat search ignores them, so matching
+    against the raw name never succeeds. Digits and CJK text are preserved.
+    """
+    kept = [
+        ch for ch in name
+        if ch not in _STRIP_CHARS and unicodedata.category(ch) not in ("So", "Sk")
+    ]
+    return re.sub(r"\s+", " ", "".join(kept)).strip()
+
+
+def name_segments(name: str) -> list[str]:
+    """Split a chat name into word/CJK runs, e.g. '金榜题名｜6年级' -> ['金榜题名', '6年级']."""
+    return re.findall(r"\w+", clean_chat_name(name).lower())
+
+
+def partial_name_match(name: str, text: str) -> bool:
+    """True if every segment of ``name`` appears in ``text`` (OCR-normalized, space-insensitive).
+
+    Tolerant of OCR splitting a name into pieces and of punctuation/emoji noise.
+    Single-character segments are ignored unless they are the only segment.
+    """
+    segs = name_segments(name)
+    long_segs = [s for s in segs if len(s) >= 2] or segs
+    if not long_segs:
+        return False
+    hay = ocr_normalize(text).replace(" ", "")
+    return all(ocr_normalize(s) in hay for s in long_segs)
 
 
 def ocr_normalize(text: str) -> str:

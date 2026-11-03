@@ -190,7 +190,7 @@ class Snapshot:
                 texts.append(top[0].string())
         return texts
 
-    def contains_text(self, target: str) -> bool:
+    def contains_text(self, target: str, allow_truncated: bool = False) -> bool:
         """Check if target text appears in this snapshot (fuzzy matching)."""
         from wechat.ocr import ocr_normalize
 
@@ -222,6 +222,24 @@ class Snapshot:
         # Handle truncated WeChat titles: "...流群（499）" for long group names.
         # Check if any trailing suffix of the target appears in the OCR text.
         # Use the normalized variants so OCR confusions (I/l/1, O/0) match.
+        from wechat.ocr import partial_name_match
+        if partial_name_match(target, " ".join(texts)):
+            return True
+
+        if allow_truncated:
+            # The title region can clip the left edge (wrong sidebar divider) or
+            # WeChat can ellipsize long names, leaving only a fragment such as
+            # '题名' of '金榜题名'. Accept a fragment covering >= half the name.
+            from wechat.ocr import name_segments
+            compact = "".join(name_segments(target))
+            hay = ocr_normalize(" ".join(texts)).replace(" ", "")
+            need = max(2, (len(compact) + 1) // 2)
+            if len(compact) >= 2:
+                for frag_len in range(len(compact) - 1, need - 1, -1):
+                    for frag in {compact[:frag_len], compact[-frag_len:]}:
+                        if ocr_normalize(frag) in hay:
+                            return True
+
         if len(target_norm) >= 4:
             for suffix_len in range(min(len(target_norm), 10), 2, -1):
                 suffix = target_norm[-suffix_len:].replace(" ", "")
@@ -309,7 +327,7 @@ class Snapshot:
         Returns dict of section_name → list of Element.
         """
         from difflib import SequenceMatcher
-        from wechat.ocr import ocr_normalize, _match_section_header, _find_containing_section, _SECTION_HEADER_PATTERNS
+        from wechat.ocr import ocr_normalize, partial_name_match, _match_section_header, _find_containing_section, _SECTION_HEADER_PATTERNS
 
         target_norm = ocr_normalize(target_name)
         target_compact_norm = target_norm.replace(" ", "")
@@ -362,7 +380,9 @@ class Snapshot:
                 return True
             # Fuzzy match: tolerates OCR errors (O↔C, l↔I↔1, 交↔父, 群↔苟…)
             sim = SequenceMatcher(None, target_compact_norm, text_norm_compact).ratio()
-            return sim >= 0.55
+            if sim >= 0.55:
+                return True
+            return partial_name_match(target_name, text_norm_compact)
 
         for i, (sy, tl, text_orig) in enumerate(all_blocks):
             if i in used_indices:

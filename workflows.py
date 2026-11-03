@@ -13,7 +13,7 @@ from typing import Optional
 
 from wechat import actions
 from wechat.locator import Locator
-from wechat.ocr import describe_target_type
+from wechat.ocr import clean_chat_name, describe_target_type
 
 
 def navigate_to_chat(
@@ -31,6 +31,11 @@ def navigate_to_chat(
 
     Raises RuntimeError if navigation fails.
     """
+    # Emoji and trailing spaces can't be OCR'd or searched; match on the cleaned name.
+    cleaned = clean_chat_name(group_name)
+    if cleaned and cleaned != group_name:
+        print(f"  Using cleaned chat name: '{cleaned}'")
+        group_name = cleaned
 
     # --- Strategy 1: Locate in sidebar, click ---
     elem = locator.sidebar_item(group_name)

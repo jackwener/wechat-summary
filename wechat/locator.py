@@ -220,10 +220,16 @@ class Locator:
         # Clamp to at least 60pt: layout sometimes detects only the macOS traffic-light
         # bar (~18pt), which cuts off the chat name text that sits below it.
         title_height = max((self.layout["titlebar_bottom"] + 10), 60) if self.layout else 80
+        # The detected divider is not always exact and can sit to the right of
+        # where the chat name starts, clipping its left edge. Start the region
+        # up to 220pt left of it (but not into the icon column); the only text
+        # that can pick up there is the sidebar's search box, never a chat name.
+        icon_right = self.layout.get("icon_col_right", 0) if self.layout else 0
+        left = max(icon_right, sidebar_right - 220)
         return {
-            "x": wx + sidebar_right,
+            "x": wx + left,
             "y": wy,
-            "width": ww - sidebar_right,
+            "width": ww - left,
             "height": title_height,
         }
 
@@ -239,7 +245,7 @@ class Locator:
             pass
         self.invalidate("title")
         snap = self.snapshot("title")
-        return snap.contains_text(name)
+        return snap.contains_text(name, allow_truncated=True)
 
     def verify_search_results(self, name: str) -> bool:
         """Check if search results contain the target name."""

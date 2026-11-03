@@ -56,7 +56,9 @@ def run_text_recognition(
     req.setRecognitionLanguages_(languages)
     req.setUsesLanguageCorrection_(use_language_correction)
 
-    handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(img_url, {})
+    # Pass None, not {}: on recent macOS an empty options dict raises
+    # NSInvalidArgumentException ("key does not exist") inside Vision.
+    handler = Vision.VNImageRequestHandler.alloc().initWithURL_options_(img_url, None)
 
     # PyObjC translates the NSError** out-parameter into a tuple return:
     # (BOOL success, NSError error_or_none). Unpack defensively so we

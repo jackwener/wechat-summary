@@ -212,7 +212,7 @@ def _load_local_env() -> None:
         from dotenv import load_dotenv
     except Exception:  # noqa: BLE001
         return
-    load_dotenv(".env.local", override=False)
+    load_dotenv(".env.local", override=True)
 
 
 def _build_anthropic_client():
@@ -306,7 +306,7 @@ def save_summary(
     out.mkdir(parents=True, exist_ok=True)
 
     safe_group = _sanitize_filename_component(group_name)
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = datetime.now().strftime("%Y-%m-%d-%H%M%S")
     filename = f"{date_str}_{safe_group}.md"
     filepath = out / filename
 
@@ -314,6 +314,25 @@ def save_summary(
     if safe_group != group_name:
         print(f"Group name sanitized for filename: {safe_group}")
     print(f"Summary saved to {filepath}")
+    return str(filepath)
+
+
+def save_raw_history(
+    chat_text: str,
+    output_dir: str = "output",
+    group_name: str = "群聊",
+) -> str:
+    """Save the raw OCR chat text as raw-chat-history-<date>-<time>_<group>.md."""
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    from wechat.ocr import clean_chat_name
+
+    safe_group = _sanitize_filename_component(clean_chat_name(group_name))
+    stamp = datetime.now().strftime("%Y-%m-%d-%H%M%S")
+    filepath = out / f"raw-chat-history-{stamp}_{safe_group}.md"
+    filepath.write_text(chat_text, encoding="utf-8")
+    print(f"Raw chat history saved to {filepath}")
     return str(filepath)
 
 
